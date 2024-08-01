@@ -17,7 +17,8 @@ use std::{
     fs::{create_dir_all, read_to_string, write, File},
     io::{self, stdout, ErrorKind},
     path::{Path, PathBuf},
-    time::Duration, vec,
+    time::Duration,
+    vec,
 };
 use tui_textarea::{CursorMove, Input, Key, TextArea};
 
@@ -143,6 +144,10 @@ fn main() -> Result<(), io::Error> {
     Ok(())
 }
 
+enum PlayingType {
+    Playlist,
+    Song,
+}
 #[derive(PartialEq, Eq)]
 enum Mode {
     Normal,
@@ -165,7 +170,7 @@ struct Savedata {
 
 #[derive(Serialize, Deserialize)]
 struct SerializablePlaylist {
-    songs: Vec<SerializableSong>,
+    songs: Vec<String>,
     name: String,
 }
 
@@ -192,16 +197,19 @@ struct Song {
 }
 
 struct ItemList {
-    pitems: Vec<Playlist>,
-    sitems: Vec<Song>,
+    playlist_items: Vec<Playlist>,
+    song_items: Vec<Song>,
     state: ListState,
 }
 
 struct App {
+    playing_type: Option<PlayingType>,
     playing_index: Option<usize>,
     textarea: TextArea<'static>,
     #[allow(dead_code)]
     handle: OutputStreamHandle,
+    playlist_selection: usize,
+    song_selection: usize,
     song_length: Duration,
     input_mode: InputMode,
     pending_name: String,
@@ -211,7 +219,6 @@ struct App {
     savedata: Savedata,
     should_exit: bool,
     valid_input: bool,
-    selection: usize,
     list: ItemList,
     client: Client,
     log: String,
@@ -226,23 +233,24 @@ impl App {
             .unwrap();
         let (stream, handle) = OutputStream::try_default().unwrap();
         let sink = Sink::try_new(&handle).unwrap();
-        let savedata = load_data();
         App {
             client,
             handle,
             sink,
             stream,
-            savedata,
+            savedata: load_data(),
             should_exit: false,
             playlist_mode: true,
             list: ItemList {
-                pitems: vec![],
-                sitems: vec![],
+                playlist_items: vec![],
+                song_items: vec![],
                 state: ListState::default(),
             },
-            selection: 0,
+            playlist_selection: 0,
+            song_selection: 0,
             song_length: Duration::from_secs(0),
             playing_index: None,
+            playing_type: None,
             log: String::from("Initialized!"),
             mode: Mode::Normal,
             input_mode: InputMode::None,
@@ -264,9 +272,12 @@ impl App {
                         KeyCode::Char('a') => self.add(),
                         KeyCode::Char('d') => self.download_link(),
                         KeyCode::Char('r') => self.remove_current(),
+                        KeyCode::Left => self.decrease_volume(),
+                        KeyCode::Right => self.increase_volume(),
                         KeyCode::Down => self.select_next(),
                         KeyCode::Up => self.select_previous(),
                         KeyCode::Enter => self.play_current(),
+                        KeyCode::Char(' ') => self.space(),
                         _ => {}
                     },
                     Mode::Input if key.kind == KeyEventKind::Press => match key.code {
@@ -287,6 +298,28 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    fn space(&mut self) {
+        self.log = String::from("You clicked space!");
+    }
+
+    fn increase_volume(&mut self) {
+        let volume = self.sink.volume();
+        if volume >= 5. {
+            self.log = String::from("Volume can't be above 500%");
+            return;
+        }
+        self.sink.set_volume(volume + 0.05);
+    }
+
+    fn decrease_volume(&mut self) {
+        let volume = self.sink.volume();
+        if volume <= 0. {
+            self.log = String::from("Volume can't be negative!");
+            return;
+        }
+        self.sink.set_volume(volume - 0.05);
     }
 
     fn save_and_exit(&mut self) {
@@ -353,7 +386,7 @@ impl App {
         if condition {
             let block = Block::bordered()
                 .title(Line::raw(title))
-                .style(Style::default().light_green().not_underlined())
+                .style(Style::default().light_green())
                 .border_set(symbols::border::DOUBLE);
             self.textarea.set_block(block);
             self.valid_input = true;
@@ -361,7 +394,7 @@ impl App {
             let block = Block::bordered()
                 .title(Line::raw(title))
                 .title_bottom(Line::raw(bad_input))
-                .style(Style::default().light_red().not_underlined())
+                .style(Style::default().light_red())
                 .border_set(symbols::border::DOUBLE);
             self.textarea.set_block(block);
             self.valid_input = false;
@@ -387,7 +420,7 @@ impl App {
                 let name = self.pending_name.to_owned();
                 let path = input.to_owned();
                 self.savedata.songs.push(SerializableSong { name, path });
-                self.list.sitems.push(Song {
+                self.list.song_items.push(Song {
                     name: self.pending_name.to_owned(),
                     path: input.to_owned(),
                     selected: false,
@@ -422,64 +455,65 @@ impl App {
     fn play_current(&mut self) {
         if self.playlist_mode {
             if let Some(idx) = self.playing_index {
-                if idx == self.selection {
-                    self.log = format!("Stopped playing music (idx {idx})");
-                    self.list.pitems[self.selection].playing = false;
+                if idx == self.playlist_selection {
+                    self.log = format!("Stopped playing playlist (idx {idx})");
+                    self.list.playlist_items[self.playlist_selection].playing = false;
                     self.playing_index = None;
+                    self.playing_type = None;
                     self.sink.stop();
                 } else {
                     self.log = format!(
-                        "Changed to different music (idx {idx} -> idx {})",
-                        self.selection
+                        "Changed to different playlist (idx {idx} -> idx {})",
+                        self.playlist_selection
                     );
-                    self.list.pitems[idx].playing = false;
-                    self.list.pitems[self.selection].playing = true;
-                    self.playing_index = Some(self.selection);
-                    for song in self.list.pitems[self.selection].songs.to_owned() {
+                    self.list.playlist_items[idx].playing = false;
+                    self.list.playlist_items[self.playlist_selection].playing = true;
+                    self.playing_index = Some(self.playlist_selection);
+                    self.playing_type = Some(PlayingType::Playlist);
+                    self.sink.stop();
+                    for song in self.list.playlist_items[self.playlist_selection].songs.to_owned() {
                         self.play_path(&song.path);
                     }
-                    if self.sink.is_paused() {
-                        self.sink.play();
-                    } else {
-                        self.sink.skip_one();
-                    }
+                    self.log = format!("queue: {}", self.sink.len());
+                    self.sink.play();
                 }
             } else {
-                self.log = format!("Started playing music (idx {})", self.selection);
-                self.list.pitems[self.selection].playing = true;
-                self.playing_index = Some(self.selection);
-                for song in self.list.pitems[self.selection].songs.to_owned() {
+                self.list.playlist_items[self.playlist_selection].playing = true;
+                self.playing_index = Some(self.playlist_selection);
+                self.playing_type = Some(PlayingType::Playlist);
+                for song in self.list.playlist_items[self.playlist_selection].songs.to_owned() {
                     self.play_path(&song.path);
                 }
+                self.log = format!("Queue: {}", self.sink.len());
                 self.sink.play();
             }
         } else {
             if let Some(idx) = self.playing_index {
-                if idx == self.selection {
+                if idx == self.song_selection {
                     self.log = format!("Stopped playing music (idx {idx})");
-                    self.list.sitems[self.selection].playing = false;
+                    self.list.song_items[self.song_selection].playing = false;
                     self.playing_index = None;
+                    self.playing_type = None;
                     self.sink.stop();
                 } else {
                     self.log = format!(
                         "Changed to different music (idx {idx} -> idx {})",
-                        self.selection
+                        self.song_selection
                     );
-                    self.list.sitems[idx].playing = false;
-                    self.list.sitems[self.selection].playing = true;
-                    self.playing_index = Some(self.selection);
-                    self.play_path(&self.list.sitems[self.selection].path.to_owned());
-                    if self.sink.is_paused() {
-                        self.sink.play();
-                    } else {
-                        self.sink.skip_one();
-                    }
+                    self.list.song_items[idx].playing = false;
+                    self.list.song_items[self.song_selection].playing = true;
+                    self.playing_index = Some(self.song_selection);
+                    self.playing_type = Some(PlayingType::Song);
+                    self.sink.stop();
+                    self.play_path(&self.list.song_items[self.song_selection].path.to_owned());
+                    self.sink.play();
                 }
             } else {
-                self.log = format!("Started playing music (idx {})", self.selection);
-                self.list.sitems[self.selection].playing = true;
-                self.playing_index = Some(self.selection);
-                self.play_path(&self.list.sitems[self.selection].path.to_owned());
+                self.log = format!("Started playing music (idx {})", self.song_selection);
+                self.list.song_items[self.song_selection].playing = true;
+                self.playing_index = Some(self.song_selection);
+                self.playing_type = Some(PlayingType::Song);
+                self.play_path(&self.list.song_items[self.song_selection].path.to_owned());
                 self.sink.play();
             }
         }
@@ -487,57 +521,54 @@ impl App {
 
     fn select_next(&mut self) {
         if self.playlist_mode {
-            if self.selection + 1 == self.list.pitems.len() {
-                self.list.pitems[self.selection].selected = false;
-                self.selection = 0;
-                self.list.pitems[self.selection].selected = true;
+            if self.playlist_selection + 1 == self.list.playlist_items.len() {
+                self.list.playlist_items[self.playlist_selection].selected = false;
+                self.playlist_selection = 0;
+                self.list.playlist_items[self.playlist_selection].selected = true;
             } else {
-                self.list.pitems[self.selection].selected = false;
-                self.selection += 1;
-                self.list.pitems[self.selection].selected = true;
+                self.list.playlist_items[self.playlist_selection].selected = false;
+                self.playlist_selection += 1;
+                self.list.playlist_items[self.playlist_selection].selected = true;
             }
         } else {
-            if self.selection + 1 == self.list.sitems.len() {
-                self.list.sitems[self.selection].selected = false;
-                self.selection = 0;
-                self.list.sitems[self.selection].selected = true;
+            if self.song_selection + 1 == self.list.song_items.len() {
+                self.list.song_items[self.song_selection].selected = false;
+                self.song_selection = 0;
+                self.list.song_items[self.song_selection].selected = true;
             } else {
-                self.list.sitems[self.selection].selected = false;
-                self.selection += 1;
-                self.list.sitems[self.selection].selected = true;
+                self.list.song_items[self.song_selection].selected = false;
+                self.song_selection += 1;
+                self.list.song_items[self.song_selection].selected = true;
             }
         }
     }
 
     fn select_previous(&mut self) {
         if self.playlist_mode {
-            if self.selection == 0 {
-                self.list.pitems[self.selection].selected = false;
-                self.selection = self.list.pitems.len() - 1;
-                self.list.pitems[self.selection].selected = true;
+            if self.playlist_selection == 0 {
+                self.list.playlist_items[self.playlist_selection].selected = false;
+                self.playlist_selection = self.list.playlist_items.len() - 1;
+                self.list.playlist_items[self.playlist_selection].selected = true;
             } else {
-                self.list.pitems[self.selection].selected = false;
-                self.selection -= 1;
-                self.list.pitems[self.selection].selected = true;
+                self.list.playlist_items[self.playlist_selection].selected = false;
+                self.playlist_selection -= 1;
+                self.list.playlist_items[self.playlist_selection].selected = true;
             }
         } else {
-            if self.selection == 0 {
-                self.list.sitems[self.selection].selected = false;
-                self.selection = self.list.sitems.len() - 1;
-                self.list.sitems[self.selection].selected = true;
+            if self.song_selection == 0 {
+                self.list.song_items[self.song_selection].selected = false;
+                self.song_selection = self.list.song_items.len() - 1;
+                self.list.song_items[self.song_selection].selected = true;
             } else {
-                self.list.sitems[self.selection].selected = false;
-                self.selection -= 1;
-                self.list.sitems[self.selection].selected = true;
+                self.list.song_items[self.song_selection].selected = false;
+                self.song_selection -= 1;
+                self.list.song_items[self.song_selection].selected = true;
             }
         }
     }
 
     fn play_path(&mut self, path: &str) {
-        let file = match File::open(path) {
-            Ok(file) => file,
-            Err(err) => panic!("{err}"),
-        };
+        let file = File::open(path).unwrap();
         let source = Decoder::new(file).unwrap();
         self.song_length = source.total_duration().unwrap();
         self.sink.append(source);
@@ -549,52 +580,62 @@ impl App {
     }
 
     fn remove_current(&mut self) {
-        // TODO: Reflect on Savedata
         if self.playlist_mode {
-            if self.list.pitems.len() == 1 {
-                self.log = String::from("Cannot remove! List cannot have 0 items!") // TODO: list can have 0 items
+            if self.list.playlist_items.len() == 1 {
+                // TODO: list can have 0 items
+                self.log = String::from("Cannot remove! List cannot have 0 items!")
             } else {
-                self.log = format!("Remove idx {}", self.selection);
-                self.list.pitems.remove(self.selection);
+                self.log = format!("Remove idx {}", self.playlist_selection);
+                self.list.playlist_items.remove(self.playlist_selection);
+                self.savedata.playlists.remove(self.playlist_selection);
                 if let Some(idx) = self.playing_index {
-                    if idx == self.selection {
+                    if idx == self.playlist_selection {
                         self.playing_index = None;
                     }
                 }
-                if self.selection == self.list.pitems.len() {
-                    self.selection -= 1;
-                    self.list.pitems[self.selection].selected = true;
+                if self.playlist_selection == self.list.playlist_items.len() {
+                    self.playlist_selection -= 1;
+                    self.list.playlist_items[self.playlist_selection].selected = true;
                 } else {
-                    self.list.pitems[self.selection].selected = true;
+                    self.list.playlist_items[self.playlist_selection].selected = true;
                 }
             }
         } else {
-            if self.list.sitems.len() == 1 {
-                self.log = String::from("Cannot remove! List cannot have 0 items!") // TODO: list can have 0 items
+            if self.list.song_items.len() == 1 {
+                // TODO: list can have 0 items
+                self.log = String::from("Cannot remove! List cannot have 0 items!")
             } else {
-                self.log = format!("Remove idx {}", self.selection);
-                self.list.sitems.remove(self.selection);
+                self.log = format!("Remove idx {}", self.song_selection);
+                self.list.song_items.remove(self.song_selection);
+                self.savedata.songs.remove(self.song_selection);
                 if let Some(idx) = self.playing_index {
-                    if idx == self.selection {
+                    if idx == self.song_selection {
                         self.playing_index = None;
                     }
                 }
-                if self.selection == self.list.sitems.len() {
-                    self.selection -= 1;
-                    self.list.sitems[self.selection].selected = true;
+                if self.song_selection == self.list.song_items.len() {
+                    self.song_selection -= 1;
+                    self.list.song_items[self.song_selection].selected = true;
                 } else {
-                    self.list.sitems[self.selection].selected = true;
+                    self.list.song_items[self.song_selection].selected = true;
                 }
             }
         }
     }
 
     fn init(&mut self) -> io::Result<()> {
-        // TODO: Load playlists instead
+        self.sink.set_volume(0.3); // For testing purposes
         let mut first = true;
         for playlist in &self.savedata.playlists {
-            self.list.pitems.push(Playlist {
-                songs: playlist.songs.to_owned(),
+            let songs = self
+                .savedata
+                .songs
+                .iter()
+                .filter(|song| playlist.songs.contains(&song.name))
+                .cloned()
+                .collect();
+            self.list.playlist_items.push(Playlist {
+                songs,
                 name: playlist.name.to_owned(),
                 selected: first,
                 playing: false,
@@ -641,7 +682,7 @@ impl Widget for &mut App {
             let [header_area, main_area, player_area, log_area] = Layout::vertical([
                 Constraint::Length(1),
                 Constraint::Fill(1),
-                Constraint::Length(3),
+                Constraint::Length(4),
                 Constraint::Length(1),
             ])
             .areas(area);
@@ -663,7 +704,6 @@ impl App {
         let block = Block::bordered()
             .title(Line::raw("Player"))
             .border_set(symbols::border::DOUBLE);
-        let size = (area.as_size().width - 6) as f32;
         const PLAY: &str = "▶️";
         const PAUSE: &str = "⏸️";
         let remaining = self.song_length.saturating_sub(self.sink.get_pos());
@@ -672,9 +712,14 @@ impl App {
         } else {
             1.0
         };
+        let title = "title";
+        let num = "01";
         Paragraph::new(format!(
-            "{PAUSE} {}",
-            "=".repeat((size * (1.0 - float)) as usize)
+            "{num} {title}{}🔈{:.0}% {}\n{PAUSE} {}",
+            " ".repeat((area.as_size().width - 22 - title.len() as u16) as usize),
+            self.sink.volume() * 100.,
+            "=".repeat((self.sink.volume() * 10.) as usize),
+            "=".repeat(((area.as_size().width - 6) as f32 * (1.0 - float)) as usize),
         ))
         .block(block)
         .render(area, buf);
@@ -695,10 +740,10 @@ impl App {
             .border_set(symbols::border::DOUBLE);
 
         if self.playlist_mode {
-            let list = List::new(self.list.pitems.to_owned()).block(block);
+            let list = List::new(self.list.playlist_items.to_owned()).block(block);
             StatefulWidget::render(list, area, buf, &mut self.list.state);
         } else {
-            let list = List::new(self.list.sitems.to_owned()).block(block);
+            let list = List::new(self.list.song_items.to_owned()).block(block);
             StatefulWidget::render(list, area, buf, &mut self.list.state);
         }
     }

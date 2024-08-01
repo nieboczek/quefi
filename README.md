@@ -7,7 +7,7 @@ Run the executable file you downloaded in your terminal. To get started visit th
 ## Screenshots
 #missing
 # TODOS!!!
-- load playlists instead of songs at start
+- self.song_length is calculated only on the first song, need to find like a callback to know when song stops playing/next song goes online
 - volume slider!!!
 - make mouse do stuff ;-;
 - pause
