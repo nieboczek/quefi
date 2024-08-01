@@ -315,7 +315,8 @@ impl App {
 
     fn decrease_volume(&mut self) {
         let volume = self.sink.volume();
-        if volume <= 0. {
+        // I love when computers fail with 8 digit accuracy
+        if volume <= 0.00000001 {
             self.log = String::from("Volume can't be negative!");
             return;
         }
