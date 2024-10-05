@@ -20,7 +20,7 @@ fn create_file() -> io::Result<File> {
         .read(true)
         .write(true)
         .create(true)
-        //.mode(0o744) this might affect A LOT
+        //.mode(0o744) // this might affect A LOT
         .open("yt-dlp")
 }
 
@@ -34,7 +34,7 @@ struct Asset {
     name: String,
 }
 
-pub fn get_dlp(client: &Client) -> Result<(), Error> {
+pub fn download_dlp(client: &Client) -> Result<(), Error> {
     let response = client
         .get("https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest")
         .header("User-Agent", "quefi")
@@ -58,7 +58,7 @@ pub fn get_dlp(client: &Client) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn download(dlp_path: String, yt_link: &str) -> Result<(), Error> {
+pub fn download_song(dlp_path: String, yt_link: &str) -> Result<(), Error> {
     let dir = get_quefi_dir();
     #[cfg(not(target_os = "windows"))]
     let mut child = Command::new(dlp_path)
