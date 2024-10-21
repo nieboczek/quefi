@@ -8,9 +8,8 @@ Figure out the rest! :)
 ## Screenshots
 #missing
 # TODO!!!
-- self.song_length is calculated only on the first song, need to find like a callback to know when song stops playing/next song goes online
+- help menu (press H)
 - make mouse do stuff ;-;
-- pause
 - spotify song/playlist download
 - youtube playlist download!!!
 - list can have 0 items

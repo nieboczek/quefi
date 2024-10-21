@@ -8,7 +8,7 @@ use ratatui::{
         ExecutableCommand,
     },
     prelude::*,
-    widgets::*,
+    widgets::{Block, List, ListItem, ListState, Paragraph},
     Terminal,
 };
 use reqwest::blocking::Client;
@@ -24,11 +24,6 @@ use std::{
 };
 use tui_textarea::{CursorMove, Input, Key, TextArea};
 
-#[warn(clippy::shadow_unrelated)]
-#[warn(clippy::shadow_same)]
-#[warn(clippy::shadow_reuse)]
-#[warn(clippy::exit)]
-#[warn(clippy::unwrap_used)]
 mod youtube;
 
 #[cfg(target_os = "windows")]
@@ -199,6 +194,11 @@ struct Song {
     path: String,
     playing: bool,
 }
+struct QueuedSong {
+    name: String,
+    song_idx: u16,
+    duration: Duration,
+}
 struct ItemList {
     playlist_items: Vec<Playlist>,
     song_items: Vec<Song>,
@@ -208,8 +208,8 @@ struct ItemList {
 struct App {
     cursor_selection: CursorSelection,
     playing_type: Option<PlayingType>,
-    duration_queue: Vec<Duration>,
     playing_index: Option<usize>,
+    song_queue: Vec<QueuedSong>,
     textarea: TextArea<'static>,
     #[allow(dead_code)]
     handle: OutputStreamHandle,
@@ -218,7 +218,7 @@ struct App {
     #[allow(dead_code)]
     stream: OutputStream,
     pending_name: String,
-    queue_length: usize,
+    last_queue_length: usize,
     save_data: SaveData,
     should_exit: bool,
     valid_input: bool,
@@ -241,8 +241,8 @@ impl App {
             handle,
             sink,
             stream,
-            queue_length: 0,
-            duration_queue: Vec::new(),
+            last_queue_length: 0,
+            song_queue: Vec::new(),
             save_data: load_data(),
             should_exit: false,
             list: ItemList {
@@ -268,7 +268,7 @@ impl App {
             terminal.draw(|frame| {
                 frame.render_widget(&mut *self, frame.area());
             })?;
-            // force updates every 0.1 seconds
+            // Force updates every 0.1 seconds
             if poll(Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
                     match self.mode {
@@ -282,7 +282,8 @@ impl App {
                             KeyCode::Down => self.select_next(),
                             KeyCode::Up => self.select_previous(),
                             KeyCode::Enter => self.play_current(),
-                            KeyCode::Char(' ') => self.enter_playlist(),
+                            KeyCode::Char('e') => self.enter_playlist(),
+                            KeyCode::Char(' ') => self.pause(),
                             _ => {}
                         },
                         Mode::Input if key.kind == KeyEventKind::Press => match key.code {
@@ -302,13 +303,21 @@ impl App {
                     }
                 }
             }
-            if self.sink.len() != self.queue_length {
-                if self.sink.len() != 0 {
-                    self.use_duration();
-                }
+            if self.sink.len() != self.last_queue_length && self.sink.len() != 0 {
+                self.last_queue_length = self.sink.len();
+                self.song_length = self.song_queue[0].duration;
+                self.song_queue.remove(0);
             }
         }
         Ok(())
+    }
+
+    fn pause(&mut self) {
+        if self.sink.is_paused() {
+            self.sink.play();
+        } else {
+            self.sink.pause();
+        }
     }
 
     fn enter_playlist(&mut self) {
@@ -322,11 +331,9 @@ impl App {
                 });
             }
             self.cursor_selection = CursorSelection::OnBack;
-        } else if self.cursor_selection == CursorSelection::OnBack {
+        } else {
             self.cursor_selection = CursorSelection::Playlist(0);
             self.list.song_items.clear();
-        } else {
-            self.play_current();
         }
     }
 
@@ -366,13 +373,15 @@ impl App {
                     }
                 }
 
-                let mut bad_input = String::new();
+                let bad_input: String;
                 if text.is_empty() {
                     bad_input = String::from("Song name cannot be empty");
                 } else if name_exists {
                     bad_input = String::from("Song name cannot be same as existing song's name");
                 } else if text.len() > 64 {
                     bad_input = String::from("Song name cannot be longer than 64 characters");
+                } else {
+                    bad_input = String::new();
                 }
 
                 self.textarea_condition(
@@ -488,6 +497,7 @@ impl App {
                     self.playing_index = None;
                     self.playing_type = None;
                     self.song_length = Duration::from_secs(0);
+                    self.song_queue.clear();
                     self.sink.stop();
                 } else {
                     self.log =
@@ -497,11 +507,13 @@ impl App {
                     self.playing_index = Some(idx);
                     self.playing_type = Some(PlayingType::Playlist);
                     self.sink.stop();
-                    // fuck clippy he still not good enough (use to_owned() here still)
+                    // if you want to suffer, you can figure this out
+                    #[allow(clippy::unnecessary_to_owned)]
                     for song in self.list.playlist_items[idx].songs.to_owned() {
-                        self.play_path(&song.path);
+                        self.play_path(song.name, &song.path);
                     }
-                    self.use_duration();
+                    self.song_length = self.song_queue[0].duration;
+                    self.last_queue_length = self.sink.len();
                     self.log = format!("Queue length: {}", self.sink.len());
                     self.sink.play();
                 }
@@ -510,9 +522,10 @@ impl App {
                 self.playing_index = Some(idx);
                 self.playing_type = Some(PlayingType::Playlist);
                 for song in &self.list.playlist_items[idx].songs.to_owned() {
-                    self.play_path(&song.path);
+                    self.play_path(song.name.clone(), &song.path);
                 }
-                self.use_duration();
+                self.song_length = self.song_queue[0].duration;
+                self.last_queue_length = self.sink.len();
                 self.log = format!("Queue length: {}", self.sink.len());
                 self.sink.play();
             }
@@ -524,6 +537,7 @@ impl App {
                     self.playing_index = None;
                     self.playing_type = None;
                     self.song_length = Duration::from_secs(0);
+                    self.song_queue.clear();
                     self.sink.stop();
                 } else {
                     self.log =
@@ -533,8 +547,12 @@ impl App {
                     self.playing_index = Some(idx);
                     self.playing_type = Some(PlayingType::Song);
                     self.sink.stop();
-                    self.play_path(&self.list.song_items[idx].path.to_owned());
-                    self.use_duration();
+                    self.play_path(
+                        self.list.song_items[idx].name.clone(),
+                        &self.list.song_items[idx].path.to_owned(),
+                    );
+                    self.song_length = self.song_queue[0].duration;
+                    self.last_queue_length = self.sink.len();
                     self.sink.play();
                 }
             } else {
@@ -542,8 +560,12 @@ impl App {
                 self.list.song_items[idx].playing = true;
                 self.playing_index = Some(idx);
                 self.playing_type = Some(PlayingType::Song);
-                self.play_path(&self.list.song_items[idx].path.to_owned());
-                self.use_duration();
+                self.play_path(
+                    self.list.song_items[idx].name.clone(),
+                    &self.list.song_items[idx].path.to_owned(),
+                );
+                self.song_length = self.song_queue[0].duration;
+                self.last_queue_length = self.sink.len();
                 self.sink.play();
             }
         } else {
@@ -581,9 +603,9 @@ impl App {
         if let CursorSelection::Playlist(idx) = self.cursor_selection {
             if idx == 0 {
                 self.list.playlist_items[idx].selected = false;
-                self.cursor_selection =
-                    CursorSelection::Playlist(self.list.playlist_items.len() - 1);
-                self.list.playlist_items[self.list.song_items.len() - 1].selected = true;
+                let new_index = self.list.playlist_items.len() - 1;
+                self.cursor_selection = CursorSelection::Playlist(new_index);
+                self.list.playlist_items[new_index].selected = true;
             } else {
                 self.list.playlist_items[idx].selected = false;
                 self.cursor_selection = CursorSelection::Playlist(idx - 1);
@@ -605,13 +627,26 @@ impl App {
         }
     }
 
-    fn play_path(&mut self, path: &str) {
-        let file = File::open(path).unwrap();
-        let source = Decoder::new(file).unwrap();
-        if let Some(dur) = source.total_duration() {
-            self.duration_queue.push(dur);
+    fn play_path(&mut self, song_name: String, path: &str) {
+        let file = File::open(path).expect("Failed to open file");
+        let source = Decoder::new(file).expect("Failed to decode file");
+        if let Some(duration) = source.total_duration() {
+            let queued_song = self.song_queue.last();
+            if let Some(last_song) = queued_song {
+                self.song_queue.push(QueuedSong {
+                    name: song_name,
+                    song_idx: last_song.song_idx + 1,
+                    duration,
+                });
+            } else {
+                self.song_queue.push(QueuedSong {
+                    name: song_name,
+                    song_idx: 0,
+                    duration,
+                });
+            }
         } else {
-            self.log = String::from("Duration not known for this song");
+            self.log = String::from("Duration not known for a song in your playlist.");
         }
         self.sink.append(source);
     }
@@ -666,14 +701,8 @@ impl App {
         }
     }
 
-    fn use_duration(&mut self) {
-        self.queue_length = self.sink.len();
-        self.song_length = self.duration_queue[0];
-        self.duration_queue.remove(0);
-    }
-
     fn init(&mut self) -> io::Result<()> {
-        self.sink.set_volume(0.3); // For testing purposes (so my ears don't blow up)
+        self.sink.set_volume(0.25); // For testing purposes (so my ears don't blow up)
         let mut first = true;
         for playlist in &self.save_data.playlists {
             let songs = self
@@ -753,8 +782,7 @@ impl App {
             .title(Line::raw("Player"))
             .border_set(symbols::border::DOUBLE);
 
-        const PLAY: &str = "▶️";
-        const PAUSE: &str = "⏸️";
+        let pause_symbol = if self.sink.is_paused() { "||" } else { ">>" };
 
         let remaining = self.song_length.saturating_sub(self.sink.get_pos());
         let float = if self.song_length.as_secs_f32() != 0.0 {
@@ -763,17 +791,31 @@ impl App {
             1.0
         };
 
-        // TODO: make it the actual title
-        let title = "title";
-        let num = "01";
+        let title: String;
+        let num: String;
+        if !self.song_queue.is_empty() {
+            title = self.song_queue[0].name.clone();
+            let song_idx = self.song_queue[0].song_idx;
+            if song_idx < 10 {
+                num = format!("0{song_idx}");
+            } else {
+                num = song_idx.to_string();
+            }
+        } else {
+            title = String::new();
+            num = String::from("XX");
+        }
 
-        // Using unicode "=" instead of the equal sign, because some fonts like to mess with multiple of equal signs
+        // Using unicode "═" instead of the normal equal sign, because some fonts like to mess with multiple of equal signs
         Paragraph::new(format!(
-            "{num} {title}{}🔈{:.0}% {}\n{PAUSE} {}",
+            "{num} {title}{}🔈{:.0}% {}\n{pause_symbol} {}",
             // Spaces until sound controls won't fit
             " ".repeat((area.as_size().width - 22 - title.len() as u16) as usize),
+            // Volume percentage
             self.sink.volume() * 100.,
+            // Volume as "equal signs"
             "═".repeat((self.sink.volume() * 10.) as usize),
+            // Song progress as "equal signs"
             "═".repeat(((area.as_size().width - 6) as f32 * (1. - float)) as usize),
         ))
         .block(block)
@@ -781,14 +823,17 @@ impl App {
     }
 
     fn render_list(&mut self, area: Rect, buf: &mut Buffer) {
-        let mut content = "q - quit   a - add   r - remove   d - download yt video as mp3";
+        let content: &str;
         if self.mode == Mode::Input {
             if self.valid_input {
                 content = "Esc - discard & exit input mode   Enter - submit input";
             } else {
                 content = "Esc - discard & exit input mode";
             }
+        } else {
+            content = "q - quit   a - add   r - remove   e - enter playlist   enter - play";
         }
+
         let block = Block::bordered()
             .title(Line::raw("List"))
             .title_bottom(Line::raw(content))
