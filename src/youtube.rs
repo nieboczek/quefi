@@ -58,7 +58,7 @@ pub fn download_dlp(client: &Client) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn download_song(dlp_path: String, yt_link: &str) -> Result<(), Error> {
+pub fn download_song(dlp_path: &str, yt_link: &str) -> Result<(), Error> {
     let dir = get_quefi_dir();
     #[cfg(not(target_os = "windows"))]
     let mut child = Command::new(dlp_path)

@@ -2,7 +2,12 @@ use ratatui::{
     backend::CrosstermBackend,
     crossterm::{
         event::{
-            self, poll, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind,
+            self,
+            poll,
+            Event,
+            KeyCode,
+            KeyEventKind,
+            // DisableMouseCapture, EnableMouseCapture, for mouse controls
         },
         terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
         ExecutableCommand,
@@ -141,25 +146,25 @@ fn main() -> Result<(), io::Error> {
     Ok(())
 }
 
-enum PlayingType {
-    Playlist,
-    Song,
-}
 #[derive(PartialEq)]
 enum Mode {
+    Input(InputMode),
     Normal,
-    Input,
-}
-enum InputMode {
-    DownloadLink,
-    ChooseFile,
-    AddSong,
-    GetDlp,
-    None,
+    Help,
 }
 #[derive(PartialEq)]
-enum CursorSelection {
+enum InputMode {
+    DownloadLink,
+    AddPlaylist,
+    AddSongToPlaylist,
+    ChooseFile(String),
+    AddSong,
+    GetDlp,
+}
+#[derive(PartialEq)]
+enum Cursor {
     Playlist(usize),
+    NonePlaylist,
     Song(usize),
     OnBack,
 }
@@ -200,24 +205,21 @@ struct QueuedSong {
     duration: Duration,
 }
 struct ItemList {
-    playlist_items: Vec<Playlist>,
-    song_items: Vec<Song>,
+    playlists: Vec<Playlist>,
+    songs: Vec<Song>,
     state: ListState,
 }
 
 struct App {
-    cursor_selection: CursorSelection,
-    playing_type: Option<PlayingType>,
+    #[allow(dead_code)]
+    handle: OutputStreamHandle,
+    #[allow(dead_code)]
+    stream: OutputStream,
+    current_playlist_index: Option<usize>,
+    cursor: Cursor,
     playing_index: Option<usize>,
     song_queue: Vec<QueuedSong>,
     textarea: TextArea<'static>,
-    #[allow(dead_code)]
-    handle: OutputStreamHandle,
-    song_length: Duration,
-    input_mode: InputMode,
-    #[allow(dead_code)]
-    stream: OutputStream,
-    pending_name: String,
     last_queue_length: usize,
     save_data: SaveData,
     should_exit: bool,
@@ -241,25 +243,22 @@ impl App {
             handle,
             sink,
             stream,
+            current_playlist_index: None,
             last_queue_length: 0,
             song_queue: Vec::new(),
             save_data: load_data(),
             should_exit: false,
             list: ItemList {
-                playlist_items: vec![],
-                song_items: vec![],
+                playlists: vec![],
+                songs: vec![],
                 state: ListState::default(),
             },
-            cursor_selection: CursorSelection::Playlist(0),
-            song_length: Duration::from_secs(0),
+            cursor: Cursor::Playlist(0),
             playing_index: None,
-            playing_type: None,
             log: String::from("Initialized!"),
             mode: Mode::Normal,
-            input_mode: InputMode::None,
             textarea: TextArea::default(),
             valid_input: false,
-            pending_name: String::new(),
         }
     }
 
@@ -274,19 +273,24 @@ impl App {
                     match self.mode {
                         Mode::Normal if key.kind == KeyEventKind::Press => match key.code {
                             KeyCode::Char('q') => self.save_and_exit(),
-                            KeyCode::Char('a') => self.add(),
-                            KeyCode::Char('d') => self.download_link(),
+                            KeyCode::Char('h') => self.help(),
+                            KeyCode::Char(' ') => self.pause(),
+                            KeyCode::Char('o') => self.seek_back(),
+                            KeyCode::Char('p') => self.seek_forward(),
+                            KeyCode::Char('e') => self.enter_playlist(),
+                            KeyCode::Char('a') => self.add_item(),
                             KeyCode::Char('r') => self.remove_current(),
+                            KeyCode::Char('f') => self.sink.skip_one(),
+                            KeyCode::Char('l') => self.enter_input_mode(InputMode::AddSong),
+                            KeyCode::Char('d') => self.download_link(),
                             KeyCode::Left => self.decrease_volume(),
                             KeyCode::Right => self.increase_volume(),
                             KeyCode::Down => self.select_next(),
                             KeyCode::Up => self.select_previous(),
                             KeyCode::Enter => self.play_current(),
-                            KeyCode::Char('e') => self.enter_playlist(),
-                            KeyCode::Char(' ') => self.pause(),
                             _ => {}
                         },
-                        Mode::Input if key.kind == KeyEventKind::Press => match key.code {
+                        Mode::Input(_) if key.kind == KeyEventKind::Press => match key.code {
                             KeyCode::Esc => self.exit_input_mode(),
                             KeyCode::Enter => self.submit_input(),
                             _ => {
@@ -298,18 +302,37 @@ impl App {
                                 }
                             }
                         },
-                        Mode::Normal => {}
-                        Mode::Input => {}
+                        Mode::Help if key.kind == KeyEventKind::Press => match key.code {
+                            KeyCode::Char('h') => self.help(),
+                            KeyCode::Char('q') => self.save_and_exit(),
+                            _ => {}
+                        },
+                        _ => {}
                     }
                 }
             }
-            if self.sink.len() != self.last_queue_length && self.sink.len() != 0 {
+            if self.sink.len() != self.last_queue_length {
                 self.last_queue_length = self.sink.len();
-                self.song_length = self.song_queue[0].duration;
                 self.song_queue.remove(0);
             }
         }
         Ok(())
+    }
+
+    fn seek_back(&mut self) {
+        if !self.song_queue.is_empty() {
+            self.sink
+                .try_seek(self.sink.get_pos() - Duration::from_secs(5))
+                .expect("Seeking failed");
+        }
+    }
+
+    fn seek_forward(&mut self) {
+        if !self.song_queue.is_empty() {
+            self.sink
+                .try_seek(self.sink.get_pos() + Duration::from_secs(5))
+                .expect("Seeking failed");
+        }
     }
 
     fn pause(&mut self) {
@@ -320,26 +343,35 @@ impl App {
         }
     }
 
+    fn help(&mut self) {
+        if self.mode == Mode::Help {
+            self.mode = Mode::Normal;
+        } else {
+            self.mode = Mode::Help;
+        }
+    }
+
     fn enter_playlist(&mut self) {
-        if let CursorSelection::Playlist(idx) = self.cursor_selection {
-            for song in &self.list.playlist_items[idx].songs {
-                self.list.song_items.push(Song {
+        if let Cursor::Playlist(idx) = self.cursor {
+            self.current_playlist_index = Some(idx);
+            for song in &self.list.playlists[idx].songs {
+                self.list.songs.push(Song {
                     selected: false,
                     name: song.name.to_owned(),
                     path: song.path.to_owned(),
                     playing: false,
                 });
             }
-            self.cursor_selection = CursorSelection::OnBack;
-        } else {
-            self.cursor_selection = CursorSelection::Playlist(0);
-            self.list.song_items.clear();
+            self.cursor = Cursor::OnBack;
+        } else if let Cursor::Song(_) | Cursor::OnBack = self.cursor {
+            self.cursor = Cursor::Playlist(0);
+            self.list.songs.clear();
         }
     }
 
     fn increase_volume(&mut self) {
         let volume = self.sink.volume();
-        if volume >= 5. {
+        if volume >= 5.0 {
             self.log = String::from("Volume can't be above 500%");
             return;
         }
@@ -347,13 +379,13 @@ impl App {
     }
 
     fn decrease_volume(&mut self) {
-        let volume = self.sink.volume();
-        // I love when computers fail with floats
-        if volume <= 0.001 {
+        let new_volume = self.sink.volume() - 0.05;
+        if new_volume < 0. {
             self.log = String::from("Volume can't be negative!");
-            return;
+            self.sink.set_volume(0.);
+        } else {
+            self.sink.set_volume(new_volume);
         }
-        self.sink.set_volume(volume - 0.05);
     }
 
     fn save_and_exit(&mut self) {
@@ -362,8 +394,34 @@ impl App {
     }
 
     fn validate_input(&mut self) {
-        match self.input_mode {
-            InputMode::AddSong => {
+        match self.mode {
+            Mode::Input(InputMode::AddPlaylist) => {
+                let text = self.textarea.lines()[0].trim();
+                let mut name_exists = false;
+                for playlist in &self.save_data.playlists {
+                    if playlist.name == text {
+                        name_exists = true;
+                        break;
+                    }
+                }
+
+                let bad_input = if text.is_empty() {
+                    String::from("Playlist name cannot be empty")
+                } else if name_exists {
+                    String::from("Playlist name cannot be same as existing playlist's name")
+                } else if text.len() > 64 {
+                    String::from("Playlist name cannot be longer than 64 characters")
+                } else {
+                    String::new()
+                };
+
+                self.textarea_condition(
+                    !text.is_empty() && !name_exists && text.len() <= 64,
+                    String::from("Input playlist name"),
+                    bad_input,
+                );
+            }
+            Mode::Input(InputMode::AddSongToPlaylist) => {
                 let text = self.textarea.lines()[0].trim();
                 let mut name_exists = false;
                 for song in &self.save_data.songs {
@@ -373,40 +431,55 @@ impl App {
                     }
                 }
 
-                let bad_input: String;
-                if text.is_empty() {
-                    bad_input = String::from("Song name cannot be empty");
-                } else if name_exists {
-                    bad_input = String::from("Song name cannot be same as existing song's name");
-                } else if text.len() > 64 {
-                    bad_input = String::from("Song name cannot be longer than 64 characters");
-                } else {
-                    bad_input = String::new();
-                }
-
                 self.textarea_condition(
-                    !text.is_empty() && !name_exists && text.len() <= 64,
+                    name_exists,
                     String::from("Input song name"),
-                    bad_input,
+                    String::from("Song doesn't exist"),
                 );
             }
-            InputMode::ChooseFile => {
-                let path = Path::new(&self.textarea.lines()[0]);
-                // TODO: Symlinks??? More file formats???
-                self.textarea_condition(
-                    path.exists()
-                        && path.is_file()
-                        && path.extension().unwrap_or_default() == "mp3",
-                    String::from("Input file path"),
-                    String::from("File path is not pointing to a mp3 file"),
-                )
-            }
-            InputMode::DownloadLink => self.textarea_condition(
+            // Mode::Input(InputMode::AddSong) => {
+            //     let text = self.textarea.lines()[0].trim();
+            //     let mut name_exists = false;
+            //     for song in &self.save_data.songs {
+            //         if song.name == text {
+            //             name_exists = true;
+            //             break;
+            //         }
+            //     }
+
+            //     let bad_input = if text.is_empty() {
+            //         String::from("Song name cannot be empty")
+            //     } else if name_exists {
+            //         String::from("Song name cannot be same as existing song's name")
+            //     } else if text.len() > 64 {
+            //         String::from("Song name cannot be longer than 64 characters")
+            //     } else {
+            //         String::new()
+            //     };
+
+            //     self.textarea_condition(
+            //         !text.is_empty() && !name_exists && text.len() <= 64,
+            //         String::from("Input song name"),
+            //         bad_input,
+            //     );
+            // }
+            // Mode::Input(InputMode::ChooseFile) => {
+            //     let path = Path::new(&self.textarea.lines()[0]);
+            //     // TODO: Symlinks??? More file formats???
+            //     self.textarea_condition(
+            //         path.exists()
+            //             && path.is_file()
+            //             && path.extension().unwrap_or_default() == "mp3",
+            //         String::from("Input file path"),
+            //         String::from("File path is not pointing to a mp3 file"),
+            //     )
+            // }
+            Mode::Input(InputMode::DownloadLink) => self.textarea_condition(
                 is_valid_youtube_link(&self.textarea.lines()[0]),
                 String::from("Input YouTube link"),
                 String::from("Invalid YouTube link"),
             ),
-            InputMode::GetDlp => {
+            Mode::Input(InputMode::GetDlp) => {
                 let text = &self.textarea.lines()[0].to_ascii_lowercase();
                 self.textarea_condition(
                     text == "y" || text == "n",
@@ -414,7 +487,7 @@ impl App {
                     String::from("Y/N only"),
                 )
             }
-            InputMode::None => unreachable!(),
+            _ => unreachable!(),
         }
     }
 
@@ -442,45 +515,82 @@ impl App {
             return;
         }
         self.log = String::from("Submitted input");
-        match self.input_mode {
-            InputMode::AddSong => {
+        match self.mode {
+            Mode::Input(InputMode::AddPlaylist) => {
                 let input = &self.textarea.lines()[0];
-                self.pending_name = input.to_owned();
-                self.textarea.move_cursor(CursorMove::Head);
-                self.textarea.delete_line_by_end();
-                self.input_mode = InputMode::ChooseFile;
-                self.validate_input();
-            }
-            InputMode::ChooseFile => {
-                let input = &self.textarea.lines()[0];
-                let name = self.pending_name.to_owned();
-                let path = input.to_owned();
-                self.save_data.songs.push(SerializableSong { name, path });
-                self.list.song_items.push(Song {
-                    name: self.pending_name.to_owned(),
-                    path: input.to_owned(),
+                self.list.playlists.push(Playlist {
+                    songs: Vec::new(),
                     selected: false,
                     playing: false,
+                    name: input.clone(),
                 });
+                if self.cursor == Cursor::NonePlaylist {
+                    self.list.playlists[0].selected = true;
+                    self.cursor = Cursor::Playlist(0);
+                }
                 self.exit_input_mode();
             }
-            InputMode::DownloadLink => {
-                youtube::download_song(
-                    self.save_data.config.dlp_path.to_owned(),
-                    &self.textarea.lines()[0],
-                )
-                .unwrap();
+            Mode::Input(InputMode::AddSongToPlaylist) => {
+                if let Cursor::Song(idx) = self.cursor {
+                    let song_name = &self.textarea.lines()[0];
+                    self.save_data.playlists[self.current_playlist_index.unwrap()]
+                        .songs
+                        .insert(idx + 1, song_name.clone());
+
+                    let mut song_path = String::new();
+                    for song in &self.save_data.songs {
+                        if &song.name == song_name {
+                            song_path = song.path.clone();
+                        }
+                    }
+
+                    self.list.songs.insert(
+                        idx + 1,
+                        Song {
+                            selected: false,
+                            name: song_name.clone(),
+                            path: song_path,
+                            playing: false,
+                        },
+                    );
+                    self.exit_input_mode();
+                }
+            }
+            // Mode::Input(InputMode::AddSong) => {
+            //     let input = &self.textarea.lines()[0];
+            //     self.pending_name = input.to_owned();
+            //     self.textarea.move_cursor(CursorMove::Head);
+            //     self.textarea.delete_line_by_end();
+            //     self.mode = Mode::Input(InputMode::ChooseFile);
+            //     self.validate_input();
+            // }
+            // Mode::Input(InputMode::ChooseFile) => {
+            //     let input = &self.textarea.lines()[0];
+            //     let name = self.pending_name.to_owned();
+            //     let path = input.to_owned();
+            //     self.save_data.songs.push(SerializableSong { name, path });
+            //     self.list.song_items.push(Song {
+            //         name: self.pending_name.to_owned(),
+            //         path: input.to_owned(),
+            //         selected: false,
+            //         playing: false,
+            //     });
+            //     self.exit_input_mode();
+            // }
+            Mode::Input(InputMode::DownloadLink) => {
+                youtube::download_song(&self.save_data.config.dlp_path, &self.textarea.lines()[0])
+                    .unwrap();
                 self.exit_input_mode();
             }
-            InputMode::GetDlp => {
-                if &self.textarea.lines()[0] == "n" || &self.textarea.lines()[0] == "no" {
+            Mode::Input(InputMode::GetDlp) => {
+                if &self.textarea.lines()[0] == "n" {
                     self.exit_input_mode();
                     return;
                 }
                 youtube::download_dlp(&self.client).unwrap();
                 self.exit_input_mode();
             }
-            InputMode::None => unreachable!(),
+            _ => unreachable!(),
         }
     }
 
@@ -489,145 +599,153 @@ impl App {
     }
 
     fn play_current(&mut self) {
-        if let CursorSelection::Playlist(idx) = self.cursor_selection {
-            if let Some(playing_idx) = self.playing_index {
-                if playing_idx == idx {
-                    self.log = format!("Stopped playing playlist (idx {idx})");
-                    self.list.playlist_items[idx].playing = false;
-                    self.playing_index = None;
-                    self.playing_type = None;
-                    self.song_length = Duration::from_secs(0);
-                    self.song_queue.clear();
-                    self.sink.stop();
-                } else {
-                    self.log =
-                        format!("Changed to different playlist (idx {playing_idx} -> idx {idx})");
-                    self.list.playlist_items[playing_idx].playing = false;
-                    self.list.playlist_items[idx].playing = true;
-                    self.playing_index = Some(idx);
-                    self.playing_type = Some(PlayingType::Playlist);
-                    self.sink.stop();
-                    // if you want to suffer, you can figure this out
-                    #[allow(clippy::unnecessary_to_owned)]
-                    for song in self.list.playlist_items[idx].songs.to_owned() {
-                        self.play_path(song.name, &song.path);
+        match self.cursor {
+            Cursor::Playlist(idx) => {
+                if let Some(playing_idx) = self.playing_index {
+                    if playing_idx == idx {
+                        self.log = format!("Stopped playing playlist (idx {idx})");
+                        self.list.playlists[idx].playing = false;
+                        self.playing_index = None;
+                        self.song_queue.clear();
+                        self.sink.stop();
+                    } else {
+                        self.log = format!(
+                            "Changed to different playlist (idx {playing_idx} -> idx {idx})"
+                        );
+                        self.list.playlists[playing_idx].playing = false;
+                        self.list.playlists[idx].playing = true;
+                        self.playing_index = Some(idx);
+                        self.song_queue.clear();
+                        self.sink.stop();
+                        for song in self.list.playlists[idx].songs.clone() {
+                            self.play_path(song.name, &song.path);
+                        }
+                        self.last_queue_length = self.sink.len();
+                        self.log = format!("Queue length: {}", self.sink.len());
+                        self.sink.play();
                     }
-                    self.song_length = self.song_queue[0].duration;
+                } else {
+                    self.list.playlists[idx].playing = true;
+                    self.playing_index = Some(idx);
+                    self.song_queue.clear();
+                    for song in &self.list.playlists[idx].songs.to_owned() {
+                        self.play_path(song.name.clone(), &song.path);
+                    }
                     self.last_queue_length = self.sink.len();
                     self.log = format!("Queue length: {}", self.sink.len());
                     self.sink.play();
                 }
-            } else {
-                self.list.playlist_items[idx].playing = true;
-                self.playing_index = Some(idx);
-                self.playing_type = Some(PlayingType::Playlist);
-                for song in &self.list.playlist_items[idx].songs.to_owned() {
-                    self.play_path(song.name.clone(), &song.path);
-                }
-                self.song_length = self.song_queue[0].duration;
-                self.last_queue_length = self.sink.len();
-                self.log = format!("Queue length: {}", self.sink.len());
-                self.sink.play();
             }
-        } else if let CursorSelection::Song(idx) = self.cursor_selection {
-            if let Some(playing_idx) = self.playing_index {
-                if playing_idx == idx {
-                    self.log = format!("Stopped playing music (idx {idx})");
-                    self.list.song_items[idx].playing = false;
-                    self.playing_index = None;
-                    self.playing_type = None;
-                    self.song_length = Duration::from_secs(0);
-                    self.song_queue.clear();
-                    self.sink.stop();
+            Cursor::Song(idx) => {
+                if let Some(playing_idx) = self.playing_index {
+                    if playing_idx == idx {
+                        self.log = format!("Stopped playing music (idx {idx})");
+                        self.list.songs[idx].playing = false;
+                        self.playing_index = None;
+                        self.song_queue.clear();
+                        self.sink.stop();
+                    } else {
+                        self.log =
+                            format!("Changed to different music (idx {playing_idx} -> idx {idx})");
+                        self.list.songs[playing_idx].playing = false;
+                        self.list.songs[idx].playing = true;
+                        self.playing_index = Some(idx);
+                        self.song_queue.clear();
+                        self.sink.stop();
+                        self.play_path(
+                            self.list.songs[idx].name.clone(),
+                            &self.list.songs[idx].path.to_owned(),
+                        );
+                        self.last_queue_length = self.sink.len();
+                        self.sink.play();
+                    }
                 } else {
-                    self.log =
-                        format!("Changed to different music (idx {playing_idx} -> idx {idx})");
-                    self.list.song_items[playing_idx].playing = false;
-                    self.list.song_items[idx].playing = true;
+                    self.log = format!("Started playing music (idx {})", idx);
+                    self.list.songs[idx].playing = true;
                     self.playing_index = Some(idx);
-                    self.playing_type = Some(PlayingType::Song);
-                    self.sink.stop();
+                    self.song_queue.clear();
                     self.play_path(
-                        self.list.song_items[idx].name.clone(),
-                        &self.list.song_items[idx].path.to_owned(),
+                        self.list.songs[idx].name.clone(),
+                        &self.list.songs[idx].path.to_owned(),
                     );
-                    self.song_length = self.song_queue[0].duration;
                     self.last_queue_length = self.sink.len();
                     self.sink.play();
                 }
-            } else {
-                self.log = format!("Started playing music (idx {})", idx);
-                self.list.song_items[idx].playing = true;
-                self.playing_index = Some(idx);
-                self.playing_type = Some(PlayingType::Song);
-                self.play_path(
-                    self.list.song_items[idx].name.clone(),
-                    &self.list.song_items[idx].path.to_owned(),
-                );
-                self.song_length = self.song_queue[0].duration;
-                self.last_queue_length = self.sink.len();
-                self.sink.play();
             }
-        } else {
-            self.enter_playlist();
+            _ => self.enter_playlist(),
         }
     }
 
     fn select_next(&mut self) {
-        if let CursorSelection::Playlist(idx) = self.cursor_selection {
-            if idx + 1 == self.list.playlist_items.len() {
-                self.list.playlist_items[idx].selected = false;
-                self.cursor_selection = CursorSelection::Playlist(0);
-                self.list.playlist_items[idx].selected = true;
-            } else {
-                self.list.playlist_items[idx].selected = false;
-                self.cursor_selection = CursorSelection::Playlist(idx + 1);
-                self.list.playlist_items[idx + 1].selected = true;
+        match self.cursor {
+            Cursor::Playlist(idx) => {
+                if idx + 1 == self.list.playlists.len() {
+                    self.list.playlists[idx].selected = false;
+                    self.cursor = Cursor::Playlist(0);
+                    self.list.playlists[0].selected = true;
+                } else {
+                    self.list.playlists[idx].selected = false;
+                    self.cursor = Cursor::Playlist(idx + 1);
+                    self.list.playlists[idx + 1].selected = true;
+                }
             }
-        } else if let CursorSelection::Song(idx) = self.cursor_selection {
-            if idx + 1 == self.list.song_items.len() {
-                self.list.song_items[idx].selected = false;
-                self.cursor_selection = CursorSelection::OnBack;
-            } else {
-                self.list.song_items[idx].selected = false;
-                self.cursor_selection = CursorSelection::Song(idx + 1);
-                self.list.song_items[idx + 1].selected = true;
+            Cursor::Song(idx) => {
+                if idx + 1 == self.list.songs.len() {
+                    self.list.songs[idx].selected = false;
+                    self.cursor = Cursor::OnBack;
+                } else {
+                    self.list.songs[idx].selected = false;
+                    self.cursor = Cursor::Song(idx + 1);
+                    self.list.songs[idx + 1].selected = true;
+                }
             }
-        } else {
-            self.cursor_selection = CursorSelection::Song(0);
-            self.list.song_items[0].selected = true;
+            Cursor::OnBack => {
+                if !self.list.songs.is_empty() {
+                    self.cursor = Cursor::Song(0);
+                    self.list.songs[0].selected = true;
+                }
+            }
+            _ => {}
         }
     }
 
     fn select_previous(&mut self) {
-        if let CursorSelection::Playlist(idx) = self.cursor_selection {
-            if idx == 0 {
-                self.list.playlist_items[idx].selected = false;
-                let new_index = self.list.playlist_items.len() - 1;
-                self.cursor_selection = CursorSelection::Playlist(new_index);
-                self.list.playlist_items[new_index].selected = true;
-            } else {
-                self.list.playlist_items[idx].selected = false;
-                self.cursor_selection = CursorSelection::Playlist(idx - 1);
-                self.list.playlist_items[idx - 1].selected = true;
+        match self.cursor {
+            Cursor::Playlist(idx) => {
+                if idx == 0 {
+                    self.list.playlists[idx].selected = false;
+                    let new_index = self.list.playlists.len() - 1;
+                    self.cursor = Cursor::Playlist(new_index);
+                    self.list.playlists[new_index].selected = true;
+                } else {
+                    self.list.playlists[idx].selected = false;
+                    self.cursor = Cursor::Playlist(idx - 1);
+                    self.list.playlists[idx - 1].selected = true;
+                }
             }
-        } else if let CursorSelection::Song(idx) = self.cursor_selection {
-            if idx == 0 {
-                self.list.song_items[idx].selected = false;
-                self.cursor_selection = CursorSelection::OnBack;
-            } else {
-                self.list.song_items[idx].selected = false;
-                self.cursor_selection = CursorSelection::Song(idx - 1);
-                self.list.song_items[idx - 1].selected = true;
+            Cursor::Song(idx) => {
+                if idx == 0 {
+                    self.list.songs[idx].selected = false;
+                    self.cursor = Cursor::OnBack;
+                } else {
+                    self.list.songs[idx].selected = false;
+                    self.cursor = Cursor::Song(idx - 1);
+                    self.list.songs[idx - 1].selected = true;
+                }
             }
-        } else {
-            let new_selection = self.list.playlist_items.len() - 1;
-            self.cursor_selection = CursorSelection::Song(new_selection);
-            self.list.song_items[new_selection].selected = true;
+            Cursor::OnBack => {
+                if !self.list.songs.is_empty() {
+                    let new_selection = self.list.songs.len() - 1;
+                    self.cursor = Cursor::Song(new_selection);
+                    self.list.songs[new_selection].selected = true;
+                }
+            }
+            _ => {}
         }
     }
 
     fn play_path(&mut self, song_name: String, path: &str) {
+        // TODO: Actually handle errors
         let file = File::open(path).expect("Failed to open file");
         let source = Decoder::new(file).expect("Failed to decode file");
         if let Some(duration) = source.total_duration() {
@@ -651,53 +769,58 @@ impl App {
         self.sink.append(source);
     }
 
-    fn add(&mut self) {
-        self.log = String::from("Changed mode to input");
-        self.enter_input_mode(InputMode::AddSong);
+    fn add_item(&mut self) {
+        if let Cursor::Playlist(_) | Cursor::NonePlaylist = self.cursor {
+            self.enter_input_mode(InputMode::AddPlaylist);
+        } else {
+            self.enter_input_mode(InputMode::AddSongToPlaylist);
+        }
     }
 
     fn remove_current(&mut self) {
-        // TODO: list can have 0 items
-        if let CursorSelection::Playlist(idx) = self.cursor_selection {
-            if self.list.playlist_items.len() == 1 {
-                self.log = String::from("Cannot remove! List cannot have 0 items!")
-            } else {
-                self.log = format!("Remove idx {}", idx);
-                self.list.playlist_items.remove(idx);
-                self.save_data.playlists.remove(idx);
-                if let Some(playing_idx) = self.playing_index {
-                    if playing_idx == idx {
-                        self.playing_index = None;
-                    }
-                }
-                if idx == self.list.playlist_items.len() {
-                    self.cursor_selection = CursorSelection::Playlist(idx - 1);
-                    self.list.playlist_items[idx - 1].selected = true;
-                } else {
-                    self.list.playlist_items[idx - 1].selected = true;
+        if let Cursor::Playlist(idx) = self.cursor {
+            self.log = format!("Remove index {idx}");
+            self.list.playlists.remove(idx);
+            self.save_data.playlists.remove(idx);
+            if let Some(playing_idx) = self.playing_index {
+                if playing_idx == idx {
+                    self.playing_index = None;
                 }
             }
-        } else if let CursorSelection::Song(idx) = self.cursor_selection {
-            if self.list.song_items.len() == 1 {
-                self.log = String::from("Cannot remove! List cannot have 0 items!")
+            if self.list.playlists.is_empty() {
+                self.cursor = Cursor::NonePlaylist;
+            } else if idx == self.list.playlists.len() {
+                self.cursor = Cursor::Playlist(idx - 1);
+                self.list.playlists[idx - 1].selected = true;
             } else {
-                self.log = format!("Remove idx {}", idx);
-                self.list.song_items.remove(idx);
-                self.save_data.songs.remove(idx);
-                if let Some(playing_idx) = self.playing_index {
-                    if playing_idx == idx {
-                        self.playing_index = None;
-                    }
+                self.list.playlists[idx - 1].selected = true;
+            }
+        } else if let Cursor::Song(idx) = self.cursor {
+            self.log = format!("Remove idx {}", idx);
+            self.list.songs.remove(idx);
+            self.list.playlists[self.current_playlist_index.unwrap()]
+                .songs
+                .remove(idx);
+            self.save_data.playlists[self.current_playlist_index.unwrap()]
+                .songs
+                .remove(idx);
+
+            if let Some(playing_idx) = self.playing_index {
+                if playing_idx == idx {
+                    self.playing_index = None;
                 }
-                if idx == self.list.song_items.len() {
-                    self.cursor_selection = CursorSelection::Song(idx - 1);
-                    self.list.song_items[idx - 1].selected = true;
-                } else {
-                    self.list.song_items[idx - 1].selected = true;
-                }
+            }
+
+            if self.list.songs.is_empty() {
+                self.cursor = Cursor::OnBack;
+            } else if idx == self.list.songs.len() {
+                self.cursor = Cursor::Song(idx - 1);
+                self.list.songs[idx - 1].selected = true;
+            } else {
+                self.list.songs[idx - 1].selected = true;
             }
         } else {
-            self.log = String::from("Can't remove the [Back] item");
+            self.log = String::from("Can't remove!");
         }
     }
 
@@ -712,7 +835,7 @@ impl App {
                 .filter(|song| playlist.songs.contains(&song.name))
                 .cloned()
                 .collect();
-            self.list.playlist_items.push(Playlist {
+            self.list.playlists.push(Playlist {
                 songs,
                 name: playlist.name.to_owned(),
                 selected: first,
@@ -727,22 +850,20 @@ impl App {
     }
 
     fn enter_input_mode(&mut self, input_mode: InputMode) {
-        self.input_mode = input_mode;
-        self.mode = Mode::Input;
+        self.mode = Mode::Input(input_mode);
         self.validate_input();
     }
 
     fn exit_input_mode(&mut self) {
         self.textarea.move_cursor(CursorMove::Head);
         self.textarea.delete_line_by_end();
-        self.input_mode = InputMode::None;
         self.mode = Mode::Normal;
     }
 }
 
 impl Widget for &mut App {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        if self.mode == Mode::Input {
+        if let Mode::Input(_) = self.mode {
             let [header_area, main_area, input_area, player_area, log_area] = Layout::vertical([
                 Constraint::Length(1),
                 Constraint::Fill(1),
@@ -784,9 +905,15 @@ impl App {
 
         let pause_symbol = if self.sink.is_paused() { "||" } else { ">>" };
 
-        let remaining = self.song_length.saturating_sub(self.sink.get_pos());
-        let float = if self.song_length.as_secs_f32() != 0.0 {
-            remaining.as_secs_f32() / self.song_length.as_secs_f32()
+        let remaining_time = if !self.song_queue.is_empty() {
+            let remaining = self.song_queue[0]
+                .duration
+                .saturating_sub(self.sink.get_pos());
+            if self.song_queue[0].duration.as_secs_f32() != 0.0 {
+                remaining.as_secs_f32() / self.song_queue[0].duration.as_secs_f32()
+            } else {
+                1.0
+            }
         } else {
             1.0
         };
@@ -816,40 +943,61 @@ impl App {
             // Volume as "equal signs"
             "═".repeat((self.sink.volume() * 10.) as usize),
             // Song progress as "equal signs"
-            "═".repeat(((area.as_size().width - 6) as f32 * (1. - float)) as usize),
+            "═".repeat(((area.as_size().width - 6) as f32 * (1. - remaining_time)) as usize),
         ))
         .block(block)
         .render(area, buf);
     }
 
     fn render_list(&mut self, area: Rect, buf: &mut Buffer) {
-        let content: &str;
-        if self.mode == Mode::Input {
+        let content = if let Mode::Input(_) = self.mode {
             if self.valid_input {
-                content = "Esc - discard & exit input mode   Enter - submit input";
+                "Esc - discard & exit input mode   Enter - submit input"
             } else {
-                content = "Esc - discard & exit input mode";
+                "Esc - discard & exit input mode"
             }
         } else {
-            content = "q - quit   a - add   r - remove   e - enter playlist   enter - play";
-        }
+            "q - quit   h - help"
+        };
 
         let block = Block::bordered()
             .title(Line::raw("List"))
             .title_bottom(Line::raw(content))
             .border_set(symbols::border::DOUBLE);
 
-        if let CursorSelection::Playlist(_) = self.cursor_selection {
-            let list = List::new(self.list.playlist_items.to_owned()).block(block);
+        if self.mode == Mode::Help {
+            let list = List::new(vec![
+                "",
+                "  q - quit the program",
+                "  h - display this text",
+                "  enter - play song/playlist",
+                "  space - pause song/playlist",
+                "  e - enter a playlist (see songs inside)",
+                "  a - add song/playlist",
+                "  r - remove song/playlist",
+                "  f - skip song",
+                "  d - download video from YouTube as mp3",
+                "  o - seek back 5 seconds",
+                "  p - seek forward 5 seconds",
+                "  up/down - select previous/next item",
+                "  left/right - decrease/increase volume",
+            ])
+            .block(block);
+            StatefulWidget::render(list, area, buf, &mut self.list.state);
+            return;
+        }
+
+        if let Cursor::Playlist(_) | Cursor::NonePlaylist = self.cursor {
+            let list = List::new(self.list.playlists.to_owned()).block(block);
             StatefulWidget::render(list, area, buf, &mut self.list.state);
         } else {
             let mut items: Vec<ListItem> = self
                 .list
-                .song_items
+                .songs
                 .iter()
                 .map(|song| ListItem::from(song.to_owned()))
                 .collect();
-            if self.cursor_selection == CursorSelection::OnBack {
+            if self.cursor == Cursor::OnBack {
                 items.insert(0, ListItem::new("💲 [Back]".bold()));
             } else {
                 items.insert(0, ListItem::new("   [Back]".bold()));

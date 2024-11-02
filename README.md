@@ -8,8 +8,7 @@ Figure out the rest! :)
 ## Screenshots
 #missing
 # TODO!!!
-- help menu (press H)
-- make mouse do stuff ;-;
 - spotify song/playlist download
 - youtube playlist download!!!
-- list can have 0 items
+- discord integration (https://crates.io/crates/discord-rich-presence & https://discord.com/developers/applications/1298340402499289220/information)
+- make mouse do stuff ;-;
