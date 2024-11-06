@@ -211,19 +211,17 @@ struct ItemList {
 }
 
 struct App {
-    #[allow(dead_code)]
-    handle: OutputStreamHandle,
-    #[allow(dead_code)]
-    stream: OutputStream,
-    current_playlist_index: Option<usize>,
-    cursor: Cursor,
+	current_playlist_index: Option<usize>,
     playing_index: Option<usize>,
+    _handle: OutputStreamHandle,
     song_queue: Vec<QueuedSong>,
     textarea: TextArea<'static>,
     last_queue_length: usize,
+	_stream: OutputStream,
     save_data: SaveData,
     should_exit: bool,
     valid_input: bool,
+    cursor: Cursor,
     list: ItemList,
     client: Client,
     log: String,
@@ -239,10 +237,10 @@ impl App {
         let (stream, handle) = OutputStream::try_default().unwrap();
         let sink = Sink::try_new(&handle).unwrap();
         App {
-            client,
-            handle,
+			client,
+            _handle: handle,
             sink,
-            stream,
+            _stream: stream,
             current_playlist_index: None,
             last_queue_length: 0,
             song_queue: Vec::new(),
@@ -437,43 +435,43 @@ impl App {
                     String::from("Song doesn't exist"),
                 );
             }
-            // Mode::Input(InputMode::AddSong) => {
-            //     let text = self.textarea.lines()[0].trim();
-            //     let mut name_exists = false;
-            //     for song in &self.save_data.songs {
-            //         if song.name == text {
-            //             name_exists = true;
-            //             break;
-            //         }
-            //     }
+            Mode::Input(InputMode::AddSong) => {
+                let text = self.textarea.lines()[0].trim();
+                let mut name_exists = false;
+                for song in &self.save_data.songs {
+                    if song.name == text {
+                        name_exists = true;
+                        break;
+                    }
+                }
 
-            //     let bad_input = if text.is_empty() {
-            //         String::from("Song name cannot be empty")
-            //     } else if name_exists {
-            //         String::from("Song name cannot be same as existing song's name")
-            //     } else if text.len() > 64 {
-            //         String::from("Song name cannot be longer than 64 characters")
-            //     } else {
-            //         String::new()
-            //     };
+                let bad_input = if text.is_empty() {
+                    String::from("Song name cannot be empty")
+                } else if name_exists {
+                    String::from("Song name cannot be same as existing song's name")
+                } else if text.len() > 64 {
+                    String::from("Song name cannot be longer than 64 characters")
+                } else {
+                    String::new()
+                };
 
-            //     self.textarea_condition(
-            //         !text.is_empty() && !name_exists && text.len() <= 64,
-            //         String::from("Input song name"),
-            //         bad_input,
-            //     );
-            // }
-            // Mode::Input(InputMode::ChooseFile) => {
-            //     let path = Path::new(&self.textarea.lines()[0]);
-            //     // TODO: Symlinks??? More file formats???
-            //     self.textarea_condition(
-            //         path.exists()
-            //             && path.is_file()
-            //             && path.extension().unwrap_or_default() == "mp3",
-            //         String::from("Input file path"),
-            //         String::from("File path is not pointing to a mp3 file"),
-            //     )
-            // }
+                self.textarea_condition(
+                    !text.is_empty() && !name_exists && text.len() <= 64,
+                    String::from("Input song name"),
+                    bad_input,
+                );
+            }
+            Mode::Input(InputMode::ChooseFile(_)) => {
+                let path = Path::new(&self.textarea.lines()[0]);
+                // TODO: Symlinks??? More file formats???
+                self.textarea_condition(
+                    path.exists()
+                        && path.is_file()
+                        && path.extension().unwrap_or_default() == "mp3",
+                    String::from("Input file path"),
+                    String::from("File path is not pointing to a mp3 file"),
+                )
+            }
             Mode::Input(InputMode::DownloadLink) => self.textarea_condition(
                 is_valid_youtube_link(&self.textarea.lines()[0]),
                 String::from("Input YouTube link"),
@@ -515,7 +513,7 @@ impl App {
             return;
         }
         self.log = String::from("Submitted input");
-        match self.mode {
+        match &self.mode {
             Mode::Input(InputMode::AddPlaylist) => {
                 let input = &self.textarea.lines()[0];
                 self.list.playlists.push(Playlist {
@@ -556,30 +554,24 @@ impl App {
                     self.exit_input_mode();
                 }
             }
-            // Mode::Input(InputMode::AddSong) => {
-            //     let input = &self.textarea.lines()[0];
-            //     self.pending_name = input.to_owned();
-            //     self.textarea.move_cursor(CursorMove::Head);
-            //     self.textarea.delete_line_by_end();
-            //     self.mode = Mode::Input(InputMode::ChooseFile);
-            //     self.validate_input();
-            // }
-            // Mode::Input(InputMode::ChooseFile) => {
-            //     let input = &self.textarea.lines()[0];
-            //     let name = self.pending_name.to_owned();
-            //     let path = input.to_owned();
-            //     self.save_data.songs.push(SerializableSong { name, path });
-            //     self.list.song_items.push(Song {
-            //         name: self.pending_name.to_owned(),
-            //         path: input.to_owned(),
-            //         selected: false,
-            //         playing: false,
-            //     });
-            //     self.exit_input_mode();
-            // }
+            Mode::Input(InputMode::AddSong) => {
+                let input = (&self.textarea.lines()[0]).clone();
+                self.textarea.move_cursor(CursorMove::Head);
+                self.textarea.delete_line_by_end();
+                self.mode = Mode::Input(InputMode::ChooseFile(input));
+                self.validate_input();
+            }
+            Mode::Input(InputMode::ChooseFile(song_name)) => {
+                let input = &self.textarea.lines()[0];
+                self.save_data.songs.push(SerializableSong {
+                    name: song_name.clone(),
+                    path: input.clone(),
+                });
+                self.exit_input_mode();
+            }
             Mode::Input(InputMode::DownloadLink) => {
                 youtube::download_song(&self.save_data.config.dlp_path, &self.textarea.lines()[0])
-                    .unwrap();
+                    .expect("Failed to download a song");
                 self.exit_input_mode();
             }
             Mode::Input(InputMode::GetDlp) => {
@@ -587,7 +579,7 @@ impl App {
                     self.exit_input_mode();
                     return;
                 }
-                youtube::download_dlp(&self.client).unwrap();
+                youtube::download_dlp(&self.client).expect("Failed to download dlp");
                 self.exit_input_mode();
             }
             _ => unreachable!(),
@@ -976,6 +968,7 @@ impl App {
                 "  a - add song/playlist",
                 "  r - remove song/playlist",
                 "  f - skip song",
+                "  l - add song globally",
                 "  d - download video from YouTube as mp3",
                 "  o - seek back 5 seconds",
                 "  p - seek forward 5 seconds",
