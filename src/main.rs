@@ -218,24 +218,20 @@ struct QueuedSong {
     duration: Duration,
 }
 
-struct ItemList {
-    playlists: Vec<Playlist>,
-    songs: Vec<Song>,
-}
-
 struct App<'app> {
     current_playlist_index: Option<usize>,
     playing_index: Option<usize>,
     _handle: OutputStreamHandle,
     song_queue: Vec<QueuedSong>,
-    textarea: TextArea<'app>,
+	playlists: Vec<Playlist>,
     last_queue_length: usize,
+    textarea: TextArea<'app>,
     _stream: OutputStream,
     save_data: SaveData,
     should_exit: bool,
     valid_input: bool,
+	songs: Vec<Song>,
     cursor: Cursor,
-    list: ItemList,
     client: Client,
     log: String,
     sink: Sink,
@@ -251,19 +247,17 @@ impl App<'_> {
         let (stream, handle) = OutputStream::try_default().unwrap();
         let sink = Sink::try_new(&handle).unwrap();
         App {
-            client,
             _handle: handle,
-            sink,
             _stream: stream,
+            client,
+            sink,
             current_playlist_index: None,
             last_queue_length: 0,
             song_queue: Vec::new(),
             save_data: load_data(),
             should_exit: false,
-            list: ItemList {
-                playlists: vec![],
-                songs: vec![],
-            },
+			playlists: Vec::new(),
+			songs: Vec::new(),
             cursor: Cursor::Playlist(0),
             playing_index: None,
             log: String::from("Initialized!"),
@@ -365,8 +359,8 @@ impl App<'_> {
     fn enter_playlist(&mut self) {
         if let Cursor::Playlist(idx) = self.cursor {
             self.current_playlist_index = Some(idx);
-            for song in &self.list.playlists[idx].songs {
-                self.list.songs.push(Song {
+            for song in &self.playlists[idx].songs {
+                self.songs.push(Song {
                     selected: false,
                     name: song.name.clone(),
                     path: song.path.clone(),
@@ -376,7 +370,7 @@ impl App<'_> {
             self.cursor = Cursor::OnBack;
         } else if let Cursor::Song(_) | Cursor::OnBack = self.cursor {
             self.cursor = Cursor::Playlist(0);
-            self.list.songs.clear();
+            self.songs.clear();
         }
     }
 
@@ -533,14 +527,14 @@ impl App<'_> {
                     name: input.clone(),
                     songs: Vec::new(),
                 });
-                self.list.playlists.push(Playlist {
+                self.playlists.push(Playlist {
                     songs: Vec::new(),
                     selected: false,
                     playing: false,
                     name: input.clone(),
                 });
                 if self.cursor == Cursor::NonePlaylist {
-                    self.list.playlists[0].selected = true;
+                    self.playlists[0].selected = true;
                     self.cursor = Cursor::Playlist(0);
                 }
                 self.exit_input_mode();
@@ -559,7 +553,7 @@ impl App<'_> {
                         }
                     }
 
-                    self.list.songs.insert(
+                    self.songs.insert(
                         idx + 1,
                         Song {
                             selected: false,
@@ -613,7 +607,7 @@ impl App<'_> {
                 if let Some(playing_idx) = self.playing_index {
                     if playing_idx == idx {
                         self.log = format!("Stopped playing playlist (idx {idx})");
-                        self.list.playlists[idx].playing = false;
+                        self.playlists[idx].playing = false;
                         self.playing_index = None;
                         self.song_queue.clear();
                         self.sink.stop();
@@ -621,12 +615,12 @@ impl App<'_> {
                         self.log = format!(
                             "Changed to different playlist (idx {playing_idx} -> idx {idx})"
                         );
-                        self.list.playlists[playing_idx].playing = false;
-                        self.list.playlists[idx].playing = true;
+                        self.playlists[playing_idx].playing = false;
+                        self.playlists[idx].playing = true;
                         self.playing_index = Some(idx);
                         self.song_queue.clear();
                         self.sink.stop();
-                        for song in &self.list.playlists[idx].songs.clone() {
+                        for song in &self.playlists[idx].songs.clone() {
                             self.play_path(&song.name, &song.path);
                         }
                         self.last_queue_length = self.sink.len();
@@ -634,10 +628,10 @@ impl App<'_> {
                         self.sink.play();
                     }
                 } else {
-                    self.list.playlists[idx].playing = true;
+                    self.playlists[idx].playing = true;
                     self.playing_index = Some(idx);
                     self.song_queue.clear();
-                    for song in &self.list.playlists[idx].songs.clone() {
+                    for song in &self.playlists[idx].songs.clone() {
                         self.play_path(&song.name, &song.path);
                     }
                     self.last_queue_length = self.sink.len();
@@ -649,33 +643,33 @@ impl App<'_> {
                 if let Some(playing_idx) = self.playing_index {
                     if playing_idx == idx {
                         self.log = format!("Stopped playing music (idx {idx})");
-                        self.list.songs[idx].playing = false;
+                        self.songs[idx].playing = false;
                         self.playing_index = None;
                         self.song_queue.clear();
                         self.sink.stop();
                     } else {
                         self.log =
                             format!("Changed to different music (idx {playing_idx} -> idx {idx})");
-                        self.list.songs[playing_idx].playing = false;
-                        self.list.songs[idx].playing = true;
+                        self.songs[playing_idx].playing = false;
+                        self.songs[idx].playing = true;
                         self.playing_index = Some(idx);
                         self.song_queue.clear();
                         self.sink.stop();
                         self.play_path(
-                            &self.list.songs[idx].name.clone(),
-                            &self.list.songs[idx].path.clone(),
+                            &self.songs[idx].name.clone(),
+                            &self.songs[idx].path.clone(),
                         );
                         self.last_queue_length = self.sink.len();
                         self.sink.play();
                     }
                 } else {
                     self.log = format!("Started playing music (idx {})", idx);
-                    self.list.songs[idx].playing = true;
+                    self.songs[idx].playing = true;
                     self.playing_index = Some(idx);
                     self.song_queue.clear();
                     self.play_path(
-                        &self.list.songs[idx].name.clone(),
-                        &self.list.songs[idx].path.clone(),
+                        &self.songs[idx].name.clone(),
+                        &self.songs[idx].path.clone(),
                     );
                     self.last_queue_length = self.sink.len();
                     self.sink.play();
@@ -688,30 +682,30 @@ impl App<'_> {
     fn select_next(&mut self) {
         match self.cursor {
             Cursor::Playlist(idx) => {
-                if idx + 1 == self.list.playlists.len() {
-                    self.list.playlists[idx].selected = false;
+                if idx + 1 == self.playlists.len() {
+                    self.playlists[idx].selected = false;
                     self.cursor = Cursor::Playlist(0);
-                    self.list.playlists[0].selected = true;
+                    self.playlists[0].selected = true;
                 } else {
-                    self.list.playlists[idx].selected = false;
+                    self.playlists[idx].selected = false;
                     self.cursor = Cursor::Playlist(idx + 1);
-                    self.list.playlists[idx + 1].selected = true;
+                    self.playlists[idx + 1].selected = true;
                 }
             }
             Cursor::Song(idx) => {
-                if idx + 1 == self.list.songs.len() {
-                    self.list.songs[idx].selected = false;
+                if idx + 1 == self.songs.len() {
+                    self.songs[idx].selected = false;
                     self.cursor = Cursor::OnBack;
                 } else {
-                    self.list.songs[idx].selected = false;
+                    self.songs[idx].selected = false;
                     self.cursor = Cursor::Song(idx + 1);
-                    self.list.songs[idx + 1].selected = true;
+                    self.songs[idx + 1].selected = true;
                 }
             }
             Cursor::OnBack => {
-                if !self.list.songs.is_empty() {
+                if !self.songs.is_empty() {
                     self.cursor = Cursor::Song(0);
-                    self.list.songs[0].selected = true;
+                    self.songs[0].selected = true;
                 }
             }
             _ => {}
@@ -722,31 +716,31 @@ impl App<'_> {
         match self.cursor {
             Cursor::Playlist(idx) => {
                 if idx == 0 {
-                    self.list.playlists[idx].selected = false;
-                    let new_index = self.list.playlists.len() - 1;
+                    self.playlists[idx].selected = false;
+                    let new_index = self.playlists.len() - 1;
                     self.cursor = Cursor::Playlist(new_index);
-                    self.list.playlists[new_index].selected = true;
+                    self.playlists[new_index].selected = true;
                 } else {
-                    self.list.playlists[idx].selected = false;
+                    self.playlists[idx].selected = false;
                     self.cursor = Cursor::Playlist(idx - 1);
-                    self.list.playlists[idx - 1].selected = true;
+                    self.playlists[idx - 1].selected = true;
                 }
             }
             Cursor::Song(idx) => {
                 if idx == 0 {
-                    self.list.songs[idx].selected = false;
+                    self.songs[idx].selected = false;
                     self.cursor = Cursor::OnBack;
                 } else {
-                    self.list.songs[idx].selected = false;
+                    self.songs[idx].selected = false;
                     self.cursor = Cursor::Song(idx - 1);
-                    self.list.songs[idx - 1].selected = true;
+                    self.songs[idx - 1].selected = true;
                 }
             }
             Cursor::OnBack => {
-                if !self.list.songs.is_empty() {
-                    let new_selection = self.list.songs.len() - 1;
+                if !self.songs.is_empty() {
+                    let new_selection = self.songs.len() - 1;
                     self.cursor = Cursor::Song(new_selection);
-                    self.list.songs[new_selection].selected = true;
+                    self.songs[new_selection].selected = true;
                 }
             }
             _ => {}
@@ -789,25 +783,25 @@ impl App<'_> {
     fn remove_current(&mut self) {
         if let Cursor::Playlist(idx) = self.cursor {
             self.log = format!("Remove index {idx}");
-            self.list.playlists.remove(idx);
+            self.playlists.remove(idx);
             self.save_data.playlists.remove(idx);
             if let Some(playing_idx) = self.playing_index {
                 if playing_idx == idx {
                     self.playing_index = None;
                 }
             }
-            if self.list.playlists.is_empty() {
+            if self.playlists.is_empty() {
                 self.cursor = Cursor::NonePlaylist;
-            } else if idx == self.list.playlists.len() {
+            } else if idx == self.playlists.len() {
                 self.cursor = Cursor::Playlist(idx - 1);
-                self.list.playlists[idx - 1].selected = true;
+                self.playlists[idx - 1].selected = true;
             } else {
-                self.list.playlists[idx - 1].selected = true;
+                self.playlists[idx - 1].selected = true;
             }
         } else if let Cursor::Song(idx) = self.cursor {
             self.log = format!("Remove idx {}", idx);
-            self.list.songs.remove(idx);
-            self.list.playlists[self.current_playlist_index.unwrap()]
+            self.songs.remove(idx);
+            self.playlists[self.current_playlist_index.unwrap()]
                 .songs
                 .remove(idx);
             self.save_data.playlists[self.current_playlist_index.unwrap()]
@@ -820,13 +814,13 @@ impl App<'_> {
                 }
             }
 
-            if self.list.songs.is_empty() {
+            if self.songs.is_empty() {
                 self.cursor = Cursor::OnBack;
-            } else if idx == self.list.songs.len() {
+            } else if idx == self.songs.len() {
                 self.cursor = Cursor::Song(idx - 1);
-                self.list.songs[idx - 1].selected = true;
+                self.songs[idx - 1].selected = true;
             } else {
-                self.list.songs[idx - 1].selected = true;
+                self.songs[idx - 1].selected = true;
             }
         } else {
             self.log = String::from("Can't remove!");
@@ -844,7 +838,7 @@ impl App<'_> {
                 .filter(|song| playlist.songs.contains(&song.name))
                 .cloned()
                 .collect();
-            self.list.playlists.push(Playlist {
+            self.playlists.push(Playlist {
                 songs,
                 name: playlist.name.clone(),
                 selected: first,
@@ -997,8 +991,7 @@ impl App<'_> {
 
         if let Cursor::Playlist(_) | Cursor::NonePlaylist = self.cursor {
             let paragraph = Paragraph::new(
-                self.list
-                    .playlists
+                self.playlists
                     .iter()
                     .map(|playlist| playlist.to_string())
                     .collect::<Vec<String>>()
@@ -1008,9 +1001,7 @@ impl App<'_> {
 
             paragraph.render(area, buf);
         } else {
-            let mut items: Vec<String> = self
-                .list
-                .songs
+            let mut items: Vec<String> = self.songs
                 .iter()
                 .map(|song| song.to_string())
                 .collect();
