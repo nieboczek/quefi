@@ -24,8 +24,6 @@ pub const DLP_PATH: &str = "yt-dlp";
 #[derive(Serialize, Deserialize, Clone)]
 struct Config {
     dlp_path: String,
-    spotify_client_id: String,
-    spotify_client_secret: String,
 }
 
 #[derive(Debug)]

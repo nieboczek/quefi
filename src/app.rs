@@ -45,8 +45,6 @@ fn load_data() -> SaveData {
             let data = SaveData {
                 config: Config {
                     dlp_path: String::new(),
-                    spotify_client_id: String::new(),
-                    spotify_client_secret: String::new(),
                 },
                 playlists: vec![],
                 songs: vec![],
