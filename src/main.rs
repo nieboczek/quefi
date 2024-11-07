@@ -1,5 +1,10 @@
+use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
+use tui_textarea::{CursorMove, Input, Key, TextArea};
+use serde::{Deserialize, Serialize};
+use reqwest::blocking::Client;
 use ratatui::{
-    backend::CrosstermBackend,
+    backend::{CrosstermBackend, Backend},
+    buffer::Buffer,
     crossterm::{
         event::{
             self,
@@ -12,13 +17,12 @@ use ratatui::{
         terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
         ExecutableCommand,
     },
-    prelude::*,
-    widgets::{Block, List, ListItem, ListState, Paragraph},
+    layout::{Constraint, Layout, Rect},
+    style::{Style, Stylize},
+    symbols::border,
+    widgets::{Block, Paragraph, Widget},
     Terminal,
 };
-use reqwest::blocking::Client;
-use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
-use serde::{Deserialize, Serialize};
 use std::{
     fmt::{self, Display, Formatter},
     fs::{create_dir_all, read_to_string, write, File},
@@ -27,7 +31,6 @@ use std::{
     time::Duration,
     vec,
 };
-use tui_textarea::{CursorMove, Input, Key, TextArea};
 
 mod youtube;
 
@@ -44,16 +47,19 @@ pub enum Error {
     InvalidJson,
     ReleaseNotFound,
 }
+
 impl From<std::io::Error> for Error {
     fn from(err: std::io::Error) -> Self {
         Error::Io(err)
     }
 }
+
 impl From<reqwest::Error> for Error {
     fn from(err: reqwest::Error) -> Self {
         Error::Http(err)
     }
 }
+
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
@@ -91,7 +97,7 @@ fn load_data() -> SaveData {
         Ok(_) => {}
         Err(err) => {
             if err.kind() != ErrorKind::AlreadyExists {
-                panic!("Could not create quefi/songs/ in parent directory of the quefi executable file: {err}");
+                panic!("Could not create quefi/songs/ in the directory of the quefi executable file: {err}");
             }
         }
     }
@@ -112,7 +118,7 @@ fn load_data() -> SaveData {
             return data;
         }
     };
-    serde_json::from_str::<SaveData>(&contents).expect("Failed to decode")
+    serde_json::from_str::<SaveData>(&contents).expect("Failed to load save data")
 }
 
 fn is_valid_youtube_link(url: &str) -> bool {
@@ -152,6 +158,7 @@ enum Mode {
     Normal,
     Help,
 }
+
 #[derive(PartialEq)]
 enum InputMode {
     DownloadLink,
@@ -161,6 +168,7 @@ enum InputMode {
     AddSong,
     GetDlp,
 }
+
 #[derive(PartialEq)]
 enum Cursor {
     Playlist(usize),
@@ -175,11 +183,13 @@ struct SaveData {
     playlists: Vec<SerializablePlaylist>,
     songs: Vec<SerializableSong>,
 }
+
 #[derive(Serialize, Deserialize)]
 struct SerializablePlaylist {
     songs: Vec<String>,
     name: String,
 }
+
 #[derive(Clone)]
 struct Playlist {
     songs: Vec<SerializableSong>,
@@ -187,11 +197,13 @@ struct Playlist {
     playing: bool,
     name: String,
 }
+
 #[derive(Serialize, Deserialize, Clone)]
 struct SerializableSong {
     name: String,
     path: String,
 }
+
 #[derive(Debug, Clone)]
 struct Song {
     selected: bool,
@@ -199,25 +211,26 @@ struct Song {
     path: String,
     playing: bool,
 }
+
 struct QueuedSong {
     name: String,
     song_idx: u16,
     duration: Duration,
 }
+
 struct ItemList {
     playlists: Vec<Playlist>,
     songs: Vec<Song>,
-    state: ListState,
 }
 
-struct App {
-	current_playlist_index: Option<usize>,
+struct App<'app> {
+    current_playlist_index: Option<usize>,
     playing_index: Option<usize>,
     _handle: OutputStreamHandle,
     song_queue: Vec<QueuedSong>,
-    textarea: TextArea<'static>,
+    textarea: TextArea<'app>,
     last_queue_length: usize,
-	_stream: OutputStream,
+    _stream: OutputStream,
     save_data: SaveData,
     should_exit: bool,
     valid_input: bool,
@@ -228,7 +241,8 @@ struct App {
     sink: Sink,
     mode: Mode,
 }
-impl App {
+
+impl App<'_> {
     fn default() -> Self {
         let client = Client::builder()
             .timeout(Duration::from_secs(15))
@@ -237,7 +251,7 @@ impl App {
         let (stream, handle) = OutputStream::try_default().unwrap();
         let sink = Sink::try_new(&handle).unwrap();
         App {
-			client,
+            client,
             _handle: handle,
             sink,
             _stream: stream,
@@ -249,7 +263,6 @@ impl App {
             list: ItemList {
                 playlists: vec![],
                 songs: vec![],
-                state: ListState::default(),
             },
             cursor: Cursor::Playlist(0),
             playing_index: None,
@@ -309,7 +322,7 @@ impl App {
                     }
                 }
             }
-            if self.sink.len() != self.last_queue_length {
+            if self.sink.len() != self.last_queue_length && !self.song_queue.is_empty() {
                 self.last_queue_length = self.sink.len();
                 self.song_queue.remove(0);
             }
@@ -355,8 +368,8 @@ impl App {
             for song in &self.list.playlists[idx].songs {
                 self.list.songs.push(Song {
                     selected: false,
-                    name: song.name.to_owned(),
-                    path: song.path.to_owned(),
+                    name: song.name.clone(),
+                    path: song.path.clone(),
                     playing: false,
                 });
             }
@@ -492,17 +505,17 @@ impl App {
     fn textarea_condition(&mut self, condition: bool, title: String, bad_input: String) {
         if condition {
             let block = Block::bordered()
-                .title(Line::raw(title))
+                .title(title)
                 .style(Style::default().light_green())
-                .border_set(symbols::border::DOUBLE);
+                .border_set(border::DOUBLE);
             self.textarea.set_block(block);
             self.valid_input = true;
         } else {
             let block = Block::bordered()
-                .title(Line::raw(title))
-                .title_bottom(Line::raw(bad_input))
+                .title(title)
+                .title_bottom(bad_input)
                 .style(Style::default().light_red())
-                .border_set(symbols::border::DOUBLE);
+                .border_set(border::DOUBLE);
             self.textarea.set_block(block);
             self.valid_input = false;
         }
@@ -516,6 +529,10 @@ impl App {
         match &self.mode {
             Mode::Input(InputMode::AddPlaylist) => {
                 let input = &self.textarea.lines()[0];
+                self.save_data.playlists.push(SerializablePlaylist {
+                    name: input.clone(),
+                    songs: Vec::new(),
+                });
                 self.list.playlists.push(Playlist {
                     songs: Vec::new(),
                     selected: false,
@@ -609,8 +626,8 @@ impl App {
                         self.playing_index = Some(idx);
                         self.song_queue.clear();
                         self.sink.stop();
-                        for song in self.list.playlists[idx].songs.clone() {
-                            self.play_path(song.name, &song.path);
+                        for song in &self.list.playlists[idx].songs.clone() {
+                            self.play_path(&song.name, &song.path);
                         }
                         self.last_queue_length = self.sink.len();
                         self.log = format!("Queue length: {}", self.sink.len());
@@ -620,8 +637,8 @@ impl App {
                     self.list.playlists[idx].playing = true;
                     self.playing_index = Some(idx);
                     self.song_queue.clear();
-                    for song in &self.list.playlists[idx].songs.to_owned() {
-                        self.play_path(song.name.clone(), &song.path);
+                    for song in &self.list.playlists[idx].songs.clone() {
+                        self.play_path(&song.name, &song.path);
                     }
                     self.last_queue_length = self.sink.len();
                     self.log = format!("Queue length: {}", self.sink.len());
@@ -645,8 +662,8 @@ impl App {
                         self.song_queue.clear();
                         self.sink.stop();
                         self.play_path(
-                            self.list.songs[idx].name.clone(),
-                            &self.list.songs[idx].path.to_owned(),
+                            &self.list.songs[idx].name.clone(),
+                            &self.list.songs[idx].path.clone(),
                         );
                         self.last_queue_length = self.sink.len();
                         self.sink.play();
@@ -657,8 +674,8 @@ impl App {
                     self.playing_index = Some(idx);
                     self.song_queue.clear();
                     self.play_path(
-                        self.list.songs[idx].name.clone(),
-                        &self.list.songs[idx].path.to_owned(),
+                        &self.list.songs[idx].name.clone(),
+                        &self.list.songs[idx].path.clone(),
                     );
                     self.last_queue_length = self.sink.len();
                     self.sink.play();
@@ -736,7 +753,7 @@ impl App {
         }
     }
 
-    fn play_path(&mut self, song_name: String, path: &str) {
+    fn play_path(&mut self, song_name: &str, path: &str) {
         // TODO: Actually handle errors
         let file = File::open(path).expect("Failed to open file");
         let source = Decoder::new(file).expect("Failed to decode file");
@@ -744,13 +761,13 @@ impl App {
             let queued_song = self.song_queue.last();
             if let Some(last_song) = queued_song {
                 self.song_queue.push(QueuedSong {
-                    name: song_name,
+                    name: song_name.to_string(),
                     song_idx: last_song.song_idx + 1,
                     duration,
                 });
             } else {
                 self.song_queue.push(QueuedSong {
-                    name: song_name,
+                    name: song_name.to_string(),
                     song_idx: 0,
                     duration,
                 });
@@ -829,7 +846,7 @@ impl App {
                 .collect();
             self.list.playlists.push(Playlist {
                 songs,
-                name: playlist.name.to_owned(),
+                name: playlist.name.clone(),
                 selected: first,
                 playing: false,
             });
@@ -853,7 +870,7 @@ impl App {
     }
 }
 
-impl Widget for &mut App {
+impl Widget for &mut App<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         if let Mode::Input(_) = self.mode {
             let [header_area, main_area, input_area, player_area, log_area] = Layout::vertical([
@@ -885,15 +902,13 @@ impl Widget for &mut App {
     }
 }
 
-impl App {
+impl App<'_> {
     fn render_input(&mut self, area: Rect, buf: &mut Buffer) {
         self.textarea.render(area, buf);
     }
 
     fn render_player(&mut self, area: Rect, buf: &mut Buffer) {
-        let block = Block::bordered()
-            .title(Line::raw("Player"))
-            .border_set(symbols::border::DOUBLE);
+        let block = Block::bordered().title("Player").border_set(border::DOUBLE);
 
         let pause_symbol = if self.sink.is_paused() { "||" } else { ">>" };
 
@@ -910,10 +925,10 @@ impl App {
             1.0
         };
 
-        let title: String;
+        let title: &str;
         let num: String;
         if !self.song_queue.is_empty() {
-            title = self.song_queue[0].name.clone();
+            title = &self.song_queue[0].name;
             let song_idx = self.song_queue[0].song_idx;
             if song_idx < 10 {
                 num = format!("0{song_idx}");
@@ -921,7 +936,7 @@ impl App {
                 num = song_idx.to_string();
             }
         } else {
-            title = String::new();
+            title = "";
             num = String::from("XX");
         }
 
@@ -953,12 +968,12 @@ impl App {
         };
 
         let block = Block::bordered()
-            .title(Line::raw("List"))
-            .title_bottom(Line::raw(content))
-            .border_set(symbols::border::DOUBLE);
+            .title("List")
+            .title_bottom(content)
+            .border_set(border::DOUBLE);
 
         if self.mode == Mode::Help {
-            let list = List::new(vec![
+            let paragraph = Paragraph::new(concat!(
                 "",
                 "  q - quit the program",
                 "  h - display this text",
@@ -974,34 +989,45 @@ impl App {
                 "  p - seek forward 5 seconds",
                 "  up/down - select previous/next item",
                 "  left/right - decrease/increase volume",
-            ])
+            ))
             .block(block);
-            StatefulWidget::render(list, area, buf, &mut self.list.state);
+            paragraph.render(area, buf);
             return;
         }
 
         if let Cursor::Playlist(_) | Cursor::NonePlaylist = self.cursor {
-            let list = List::new(self.list.playlists.to_owned()).block(block);
-            StatefulWidget::render(list, area, buf, &mut self.list.state);
+            let paragraph = Paragraph::new(
+                self.list
+                    .playlists
+                    .iter()
+                    .map(|playlist| playlist.to_string())
+                    .collect::<Vec<String>>()
+                    .join("\n"),
+            )
+            .block(block);
+
+            paragraph.render(area, buf);
         } else {
-            let mut items: Vec<ListItem> = self
+            let mut items: Vec<String> = self
                 .list
                 .songs
                 .iter()
-                .map(|song| ListItem::from(song.to_owned()))
+                .map(|song| song.to_string())
                 .collect();
+
             if self.cursor == Cursor::OnBack {
-                items.insert(0, ListItem::new("💲 [Back]".bold()));
+                items.insert(0, "💲 [Back]".bold().to_string());
             } else {
-                items.insert(0, ListItem::new("   [Back]".bold()));
+                items.insert(0, "   [Back]".bold().to_string());
             }
-            let list = List::new(items).block(block);
-            StatefulWidget::render(list, area, buf, &mut self.list.state);
+
+            let paragraph = Paragraph::new(items.join("\n"));
+            paragraph.render(area, buf);
         }
     }
 
     fn render_log(&mut self, area: Rect, buf: &mut Buffer) {
-        Paragraph::new(self.log.to_owned())
+        Paragraph::new(self.log.clone())
             .reversed()
             .render(area, buf);
     }
@@ -1014,32 +1040,32 @@ impl App {
     }
 }
 
-impl From<Song> for ListItem<'_> {
-    fn from(song: Song) -> ListItem<'static> {
+impl ToString for &Song {
+    fn to_string(&self) -> String {
         let mut prefix = String::new();
-        if song.selected {
+        if self.selected {
             prefix.push_str("💲 ");
         } else {
             prefix.push_str("   "); // 3x space because emojis take up 2x the space a normal letter does
         }
-        if song.playing {
+        if self.playing {
             prefix.push_str("🔈 ");
         }
-        ListItem::new(format!("{}{}", prefix, song.name))
+        format!("{}{}", prefix, self.name)
     }
 }
 
-impl From<Playlist> for ListItem<'_> {
-    fn from(playlist: Playlist) -> ListItem<'static> {
+impl ToString for &Playlist {
+    fn to_string(&self) -> String {
         let mut prefix = String::new();
-        if playlist.selected {
+        if self.selected {
             prefix.push_str("💲 ");
         } else {
             prefix.push_str("   "); // 3x space because emojis take up 2x the space a normal letter does
         }
-        if playlist.playing {
+        if self.playing {
             prefix.push_str("🔈 ");
         }
-        ListItem::new(format!("{}{}", prefix, playlist.name))
+        format!("{}{}", prefix, self.name)
     }
 }
