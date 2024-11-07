@@ -1,9 +1,5 @@
-use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
-use tui_textarea::{CursorMove, Input, Key, TextArea};
-use serde::{Deserialize, Serialize};
-use reqwest::blocking::Client;
 use ratatui::{
-    backend::{CrosstermBackend, Backend},
+    backend::{Backend, CrosstermBackend},
     buffer::Buffer,
     crossterm::{
         event::{
@@ -23,6 +19,9 @@ use ratatui::{
     widgets::{Block, Paragraph, Widget},
     Terminal,
 };
+use reqwest::blocking::Client;
+use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
+use serde::{Deserialize, Serialize};
 use std::{
     fmt::{self, Display, Formatter},
     fs::{create_dir_all, read_to_string, write, File},
@@ -31,6 +30,7 @@ use std::{
     time::Duration,
     vec,
 };
+use tui_textarea::{CursorMove, Input, Key, TextArea};
 
 mod youtube;
 
@@ -223,14 +223,14 @@ struct App<'app> {
     playing_index: Option<usize>,
     _handle: OutputStreamHandle,
     song_queue: Vec<QueuedSong>,
-	playlists: Vec<Playlist>,
+    playlists: Vec<Playlist>,
     last_queue_length: usize,
     textarea: TextArea<'app>,
     _stream: OutputStream,
     save_data: SaveData,
     should_exit: bool,
     valid_input: bool,
-	songs: Vec<Song>,
+    songs: Vec<Song>,
     cursor: Cursor,
     client: Client,
     log: String,
@@ -256,8 +256,8 @@ impl App<'_> {
             song_queue: Vec::new(),
             save_data: load_data(),
             should_exit: false,
-			playlists: Vec::new(),
-			songs: Vec::new(),
+            playlists: Vec::new(),
+            songs: Vec::new(),
             cursor: Cursor::Playlist(0),
             playing_index: None,
             log: String::from("Initialized!"),
@@ -667,10 +667,7 @@ impl App<'_> {
                     self.songs[idx].playing = true;
                     self.playing_index = Some(idx);
                     self.song_queue.clear();
-                    self.play_path(
-                        &self.songs[idx].name.clone(),
-                        &self.songs[idx].path.clone(),
-                    );
+                    self.play_path(&self.songs[idx].name.clone(), &self.songs[idx].path.clone());
                     self.last_queue_length = self.sink.len();
                     self.sink.play();
                 }
@@ -1001,10 +998,7 @@ impl App<'_> {
 
             paragraph.render(area, buf);
         } else {
-            let mut items: Vec<String> = self.songs
-                .iter()
-                .map(|song| song.to_string())
-                .collect();
+            let mut items: Vec<String> = self.songs.iter().map(|song| song.to_string()).collect();
 
             if self.cursor == Cursor::OnBack {
                 items.insert(0, "💲 [Back]".bold().to_string());
