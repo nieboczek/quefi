@@ -6,10 +6,11 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-reqwest = { version = "0.12.8", features = ["json", "blocking"] }
-serde = { version = "1.0.212", features = ["derive"] }
+reqwest = { version = "0.12.9", features = ["json", "blocking"] }
+serde = { version = "1.0.214", features = ["derive"] }
+rspotify = "0.13.3"
 serde_json = "1.0.132"
 ratatui = "0.29.0"
 tui-textarea = "0.7.0"
 rodio = "0.19.0"
-regex = "1.11.0"
+regex = "1.11.1"
