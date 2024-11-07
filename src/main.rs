@@ -14,7 +14,6 @@ use std::{
 };
 
 mod app;
-mod spotify;
 mod youtube;
 
 #[cfg(target_os = "windows")]
@@ -70,20 +69,20 @@ pub fn get_quefi_dir() -> PathBuf {
     exe.parent().unwrap().join("quefi")
 }
 
-fn init_terminal() -> Result<Terminal<impl Backend>, io::Error> {
+fn init_terminal() -> io::Result<Terminal<impl Backend>> {
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
     let terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
     Ok(terminal)
 }
 
-fn restore_terminal() -> Result<(), io::Error> {
+fn restore_terminal() -> io::Result<()> {
     disable_raw_mode()?;
     stdout().execute(LeaveAlternateScreen)?;
     Ok(())
 }
 
-fn main() -> Result<(), io::Error> {
+fn main() -> io::Result<()> {
     let terminal = init_terminal()?;
     let mut app = app::App::default();
 

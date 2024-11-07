@@ -8,23 +8,7 @@ Figure out the rest! :)
 ## Screenshots
 #missing
 # TODO!!!
-- spotify song/playlist download:
-  - check if passed link correct:
-    - song function
-	- playlist function
-  - if song:
-	- get song id from link
-
-	- Get song name from that request
-	- Search for song name (& author) on YouTube
-	- Steal song from them
-  - else:
-	- GET https://api.spotify.com/v1/playlists/PLAYLIST_ID:
-      - Content-Type: "application/json"
-	- GET https://
-	- repeat the above for all the songs
 - fancy progress bar for downloading stuff
 - multi-download at the same time
-- youtube playlist download!!!
 - discord integration (https://crates.io/crates/discord-rich-presence & https://discord.com/developers/applications/1298340402499289220/information)
 - make mouse do stuff ;-;
