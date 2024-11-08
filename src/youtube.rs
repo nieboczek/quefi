@@ -37,7 +37,7 @@ struct Asset {
 pub fn download_dlp(client: &Client) -> Result<(), Error> {
     let response = client
         .get("https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest")
-        .header("User-Agent", "quefi")
+        .header("User-Agent", "nieboczek/quefi")
         .send()?;
     let release: Release = match response.json() {
         Ok(release) => release,
@@ -48,13 +48,10 @@ pub fn download_dlp(client: &Client) -> Result<(), Error> {
         .into_iter()
         .find(|asset| asset.name == DLP_PATH)
         .map(|asset| asset.browser_download_url)
-        .ok_or_else(|| {
-            panic!("Didn't find {DLP_PATH} in releases");
-        })
-        .expect("This should never print");
-    let mut content_response = client.get(url).send()?.error_for_status()?;
+        .expect("Didn't find the correct dlp in releases");
+    let mut response = client.get(url).send()?.error_for_status()?;
     let mut file = create_file()?;
-    copy(&mut content_response, &mut file)?;
+    copy(&mut response, &mut file)?;
     Ok(())
 }
 

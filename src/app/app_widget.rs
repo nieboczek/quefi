@@ -114,7 +114,7 @@ impl App<'_> {
                 "  space - pause song/playlist",
                 "  e - enter a playlist (see songs inside)",
                 "  a - add song/playlist",
-                "  r - remove song/playlist",
+                "  n - remove song/playlist",
                 "  f - skip song",
                 "  l - add song globally",
                 "  d - download video from YouTube as mp3",

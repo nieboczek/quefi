@@ -195,7 +195,7 @@ impl App<'_> {
                             KeyCode::Char('p') => self.seek_forward(),
                             KeyCode::Char('e') => self.enter_playlist(),
                             KeyCode::Char('a') => self.add_item(),
-                            KeyCode::Char('r') => self.remove_current(),
+                            KeyCode::Char('n') => self.remove_current(),
                             KeyCode::Char('f') => self.sink.skip_one(),
                             KeyCode::Char('l') => self.enter_input_mode(InputMode::AddSong),
                             KeyCode::Char('d') => self.download_link(),
