@@ -4,6 +4,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::Stylize,
     symbols::border,
+    text::Text,
     widgets::{Block, Paragraph, Widget},
 };
 
@@ -139,17 +140,17 @@ impl App<'_> {
             .block(block)
             .render(area, buf);
         } else {
-            let mut items: Vec<String> = self.songs.iter().map(|song| song.to_string()).collect();
-
-            if self.cursor == Cursor::OnBack {
-                items.insert(0, "💲 [Back]".bold().to_string());
+            let mut text = if let Cursor::OnBack(_) = self.cursor {
+                Text::from("💲 [Back]".bold())
             } else {
-                items.insert(0, "   [Back]".bold().to_string());
-            }
+                Text::from("   [Back]".bold())
+            };
 
-            Paragraph::new(items.join("\n"))
-                .block(block)
-                .render(area, buf);
+            self.songs
+                .iter()
+                .for_each(|song| text.push_line(song.to_string()));
+
+            Paragraph::new(text).block(block).render(area, buf);
         }
     }
 

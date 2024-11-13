@@ -1,4 +1,4 @@
-use crate::{get_quefi_dir, Error, DLP_PATH};
+use crate::{get_quefi_dir, Error, DLP_EXECUTABLE_NAME};
 use reqwest::blocking::Client;
 use serde::Deserialize;
 use std::{
@@ -46,7 +46,7 @@ pub fn download_dlp(client: &Client) -> Result<(), Error> {
     let url = release
         .assets
         .into_iter()
-        .find(|asset| asset.name == DLP_PATH)
+        .find(|asset| asset.name == DLP_EXECUTABLE_NAME)
         .map(|asset| asset.browser_download_url)
         .expect("Didn't find the correct dlp in releases");
     let mut response = client.get(url).send()?.error_for_status()?;

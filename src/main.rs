@@ -17,9 +17,9 @@ mod app;
 mod youtube;
 
 #[cfg(target_os = "windows")]
-pub const DLP_PATH: &str = "yt-dlp.exe";
+pub const DLP_EXECUTABLE_NAME: &str = "yt-dlp.exe";
 #[cfg(not(target_os = "windows"))]
-pub const DLP_PATH: &str = "yt-dlp";
+pub const DLP_EXECUTABLE_NAME: &str = "yt-dlp";
 
 #[derive(Serialize, Deserialize, Clone)]
 struct Config {
