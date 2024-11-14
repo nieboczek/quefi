@@ -539,14 +539,6 @@ impl App<'_> {
         self.sink.stop();
     }
 
-    fn get_playing_status(&mut self) -> Option<usize> {
-        if let Playing::Playlist(idx) | Playing::Song(idx) = self.playing {
-            Some(idx)
-        } else {
-            None
-        }
-    }
-
     fn play_current(&mut self) {
         match self.cursor {
             Cursor::Playlist(idx) => {
@@ -734,12 +726,12 @@ impl App<'_> {
             self.log = format!("Remove index {idx}");
             self.playlists.remove(idx);
             self.save_data.playlists.remove(idx);
-            // TODO: Probably bad idea
-            if let Some(playing_idx) = self.get_playing_status() {
-                if playing_idx == idx {
-                    self.playing = Playing::None;
-                }
-            }
+
+			if let Playing::Playlist(playing_idx) = self.playing {
+				if playing_idx == idx {
+					self.playing = Playing::None;
+				}
+			}
             if self.playlists.is_empty() {
                 self.cursor = Cursor::NonePlaylist;
             } else if idx == self.playlists.len() {
@@ -754,11 +746,11 @@ impl App<'_> {
             self.playlists[playlist_idx].songs.remove(idx);
             self.save_data.playlists[playlist_idx].songs.remove(idx);
 
-            if let Some(playing_idx) = self.get_playing_status() {
-                if playing_idx == idx {
-                    self.playing = Playing::None;
-                }
-            }
+			if let Playing::Song(playing_idx) = self.playing {
+				if playing_idx == idx {
+					self.playing = Playing::None;
+				}
+			}
 
             if self.songs.is_empty() {
                 self.cursor = Cursor::OnBack(playlist_idx);
