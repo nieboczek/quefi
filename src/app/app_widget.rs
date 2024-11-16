@@ -155,7 +155,7 @@ impl App<'_> {
     }
 
     fn render_log(&mut self, area: Rect, buf: &mut Buffer) {
-        Paragraph::new(self.log)
+        Paragraph::new(self.log.as_str())
             .reversed()
             .render(area, buf);
     }

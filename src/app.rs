@@ -28,12 +28,9 @@ fn save_data(data: &SaveData) {
 
 fn load_data() -> SaveData {
     let dir = get_quefi_dir();
-    match create_dir_all(dir.join("songs")) {
-        Ok(_) => {}
-        Err(err) => {
-            if err.kind() != ErrorKind::AlreadyExists {
-                panic!("Could not create quefi/songs/ in the directory of the quefi executable file: {err}");
-            }
+    if let Err(err) = create_dir_all(dir.join("songs")) {
+        if err.kind() != ErrorKind::AlreadyExists {
+            panic!("Could not create quefi/songs/ in the directory of the quefi executable file: {err}");
         }
     }
     let contents = match read_to_string(dir.join("data.json")) {
@@ -458,14 +455,14 @@ impl App<'_> {
             }
             Mode::Input(InputMode::AddSongToPlaylist) => {
                 if let Cursor::Song(idx, playlist_index) = self.cursor {
-                    let song_name = &self.textarea.lines()[0];
+                    let song_name = self.textarea.lines()[0].clone();
                     self.save_data.playlists[playlist_index]
                         .songs
                         .insert(idx + 1, song_name.clone());
 
                     let mut song_path = String::new();
                     for song in &self.save_data.songs {
-                        if &song.name == song_name {
+                        if song.name == song_name {
                             song_path = song.path.clone();
                         }
                     }
@@ -482,7 +479,7 @@ impl App<'_> {
                     self.playlists[playlist_index].songs.insert(
                         idx + 1,
                         SerializableSong {
-                            name: song_name.clone(),
+                            name: song_name,
                             path: song_path,
                         },
                     );
@@ -490,17 +487,17 @@ impl App<'_> {
                 }
             }
             Mode::Input(InputMode::AddSong) => {
-                let input = (&self.textarea.lines()[0]).clone();
+                let input = self.textarea.lines()[0].clone();
                 self.textarea.move_cursor(CursorMove::Head);
                 self.textarea.delete_line_by_end();
                 self.mode = Mode::Input(InputMode::ChooseFile(input));
                 self.validate_input();
             }
             Mode::Input(InputMode::ChooseFile(song_name)) => {
-                let input = &self.textarea.lines()[0];
+                let input = self.textarea.lines()[0].clone();
                 self.save_data.songs.push(SerializableSong {
                     name: song_name.clone(),
-                    path: input.clone(),
+                    path: input,
                 });
                 self.exit_input_mode();
             }
