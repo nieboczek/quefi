@@ -285,8 +285,8 @@ impl App<'_> {
                 });
             }
             self.cursor = Cursor::OnBack(idx);
-        } else if let Cursor::Song(..) | Cursor::OnBack(_) = self.cursor {
-            self.cursor = Cursor::Playlist(0);
+        } else if let Cursor::Song(_, playlist_idx) | Cursor::OnBack(playlist_idx) = self.cursor {
+            self.cursor = Cursor::Playlist(playlist_idx);
             self.songs.clear();
         }
     }
@@ -542,8 +542,8 @@ impl App<'_> {
     fn play_current(&mut self) {
         match self.cursor {
             Cursor::Playlist(idx) => {
-				match self.playing {
-					Playing::Playlist(playing_idx) => {
+                match self.playing {
+                    Playing::Playlist(playing_idx) => {
                         self.stop_playing_current();
                         if playing_idx != idx {
                             self.playlists[idx].playing = true;
@@ -556,8 +556,8 @@ impl App<'_> {
                             self.sink.play();
                         }
                     }
-					Playing::Song(_) => {
-						self.stop_playing_current();
+                    Playing::Song(_) => {
+                        self.stop_playing_current();
                         self.playlists[idx].playing = true;
                         self.playing = Playing::Playlist(idx);
                         for song in &self.playlists[idx].songs.clone() {
@@ -566,24 +566,32 @@ impl App<'_> {
                         self.last_queue_length = self.sink.len();
                         self.log = format!("Queue length: {}", self.sink.len());
                         self.sink.play();
-					}
-					Playing::None => {
-						self.playlists[idx].playing = true;
-						self.playing = Playing::Playlist(idx);
-						self.song_queue.clear();
-						for song in &self.playlists[idx].songs.clone() {
-							self.play_path(&song.name, &song.path);
-						}
-						self.last_queue_length = self.sink.len();
-						self.log = format!("Queue length: {}", self.sink.len());
-						self.sink.play();
-					}
-				};
+                    }
+                    Playing::None => {
+                        self.playlists[idx].playing = true;
+                        self.playing = Playing::Playlist(idx);
+                        self.song_queue.clear();
+                        for song in &self.playlists[idx].songs.clone() {
+                            self.play_path(&song.name, &song.path);
+                        }
+                        self.last_queue_length = self.sink.len();
+                        self.log = format!("Queue length: {}", self.sink.len());
+                        self.sink.play();
+                    }
+                };
             }
-            Cursor::Song(idx, _) => {
-                match self.playing {
-                    Playing::Playlist(_) => {
-                        self.stop_playing_current();
+            Cursor::Song(idx, _) => match self.playing {
+                Playing::Playlist(_) => {
+                    self.stop_playing_current();
+                    self.songs[idx].playing = true;
+                    self.playing = Playing::Song(idx);
+                    self.play_path(&self.songs[idx].name.clone(), &self.songs[idx].path.clone());
+                    self.last_queue_length = self.sink.len();
+                    self.sink.play();
+                }
+                Playing::Song(playing_idx) => {
+                    self.stop_playing_current();
+                    if playing_idx != idx {
                         self.songs[idx].playing = true;
                         self.playing = Playing::Song(idx);
                         self.play_path(
@@ -593,29 +601,16 @@ impl App<'_> {
                         self.last_queue_length = self.sink.len();
                         self.sink.play();
                     }
-                    Playing::Song(playing_idx) => {
-                        self.stop_playing_current();
-                        if playing_idx != idx {
-                            self.songs[idx].playing = true;
-                            self.playing = Playing::Song(idx);
-                            self.play_path(
-                                &self.songs[idx].name.clone(),
-                                &self.songs[idx].path.clone(),
-                            );
-                            self.last_queue_length = self.sink.len();
-                            self.sink.play();
-                        }
-                    }
-                    Playing::None => {
-                        self.songs[idx].playing = true;
-                        self.playing = Playing::Song(idx);
-                        self.song_queue.clear();
-                        self.play_path(&self.songs[idx].name.clone(), &self.songs[idx].path.clone());
-                        self.last_queue_length = self.sink.len();
-                        self.sink.play();
-                    }
                 }
-            }
+                Playing::None => {
+                    self.songs[idx].playing = true;
+                    self.playing = Playing::Song(idx);
+                    self.song_queue.clear();
+                    self.play_path(&self.songs[idx].name.clone(), &self.songs[idx].path.clone());
+                    self.last_queue_length = self.sink.len();
+                    self.sink.play();
+                }
+            },
             _ => self.enter_playlist(),
         }
     }
@@ -727,11 +722,11 @@ impl App<'_> {
             self.playlists.remove(idx);
             self.save_data.playlists.remove(idx);
 
-			if let Playing::Playlist(playing_idx) = self.playing {
-				if playing_idx == idx {
-					self.playing = Playing::None;
-				}
-			}
+            if let Playing::Playlist(playing_idx) = self.playing {
+                if playing_idx == idx {
+                    self.playing = Playing::None;
+                }
+            }
             if self.playlists.is_empty() {
                 self.cursor = Cursor::NonePlaylist;
             } else if idx == self.playlists.len() {
@@ -746,11 +741,11 @@ impl App<'_> {
             self.playlists[playlist_idx].songs.remove(idx);
             self.save_data.playlists[playlist_idx].songs.remove(idx);
 
-			if let Playing::Song(playing_idx) = self.playing {
-				if playing_idx == idx {
-					self.playing = Playing::None;
-				}
-			}
+            if let Playing::Song(playing_idx) = self.playing {
+                if playing_idx == idx {
+                    self.playing = Playing::None;
+                }
+            }
 
             if self.songs.is_empty() {
                 self.cursor = Cursor::OnBack(playlist_idx);

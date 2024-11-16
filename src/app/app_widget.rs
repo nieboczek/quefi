@@ -109,20 +109,20 @@ impl App<'_> {
         if self.mode == Mode::Help {
             Paragraph::new(concat!(
                 "",
-                "  q - quit the program",
-                "  h - display this text",
-                "  enter - play song/playlist",
-                "  space - pause song/playlist",
-                "  e - enter a playlist (see songs inside)",
-                "  a - add song/playlist",
-                "  n - remove song/playlist",
-                "  f - skip song",
-                "  l - add song globally",
-                "  d - download video from YouTube as mp3",
-                "  o - seek back 5 seconds",
-                "  p - seek forward 5 seconds",
-                "  up/down - select previous/next item",
-                "  left/right - decrease/increase volume",
+                "\n  q - quit the program",
+                "\n  h - display this text",
+                "\n  enter - play song/playlist",
+                "\n  space - pause song/playlist",
+                "\n  e - enter a playlist (see songs inside)",
+                "\n  a - add song/playlist",
+                "\n  n - remove song/playlist",
+                "\n  f - skip song",
+                "\n  l - add song globally",
+                "\n  d - download video from YouTube as mp3",
+                "\n  o - seek back 5 seconds",
+                "\n  p - seek forward 5 seconds",
+                "\n  up/down - select previous/next item",
+                "\n  left/right - decrease/increase volume",
             ))
             .block(block)
             .render(area, buf);
@@ -155,7 +155,7 @@ impl App<'_> {
     }
 
     fn render_log(&mut self, area: Rect, buf: &mut Buffer) {
-        Paragraph::new(self.log.clone())
+        Paragraph::new(self.log)
             .reversed()
             .render(area, buf);
     }
@@ -168,7 +168,7 @@ impl App<'_> {
     }
 }
 
-impl ToString for &Song {
+impl ToString for Song {
     fn to_string(&self) -> String {
         let mut prefix = String::new();
         if self.selected {
@@ -183,7 +183,7 @@ impl ToString for &Song {
     }
 }
 
-impl ToString for &Playlist {
+impl ToString for Playlist {
     fn to_string(&self) -> String {
         let mut prefix = String::new();
         if self.selected {
