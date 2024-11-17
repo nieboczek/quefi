@@ -8,7 +8,5 @@ Figure out the rest! :)
 ## Screenshots
 #missing
 # TODO!!!
-- fancy progress bar for downloading stuff
-- multi-download at the same time
-- discord integration (https://crates.io/crates/discord-rich-presence & https://discord.com/developers/applications/1298340402499289220/information)
 - make mouse do stuff ;-;
+- discord integration (https://crates.io/crates/discord-rich-presence & https://discord.com/developers/applications/1298340402499289220/information)
