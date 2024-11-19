@@ -467,7 +467,7 @@ impl App<'_> {
                         self.save_data.playlists[playlist_idx]
                             .songs
                             .insert(0, song_name.clone());
-    
+
                         self.songs.insert(
                             0,
                             Song {
@@ -489,7 +489,7 @@ impl App<'_> {
                         self.save_data.playlists[playlist_idx]
                             .songs
                             .insert(idx + 1, song_name.clone());
-    
+
                         self.songs.insert(
                             idx + 1,
                             Song {
@@ -507,7 +507,7 @@ impl App<'_> {
                             },
                         );
                     }
-                    _ => unreachable!()
+                    _ => unreachable!(),
                 }
                 self.exit_input_mode();
             }
