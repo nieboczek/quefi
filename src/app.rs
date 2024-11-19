@@ -454,37 +454,62 @@ impl App<'_> {
                 self.exit_input_mode();
             }
             Mode::Input(InputMode::AddSongToPlaylist) => {
-                if let Cursor::Song(idx, playlist_index) = self.cursor {
-                    let song_name = self.textarea.lines()[0].clone();
-                    self.save_data.playlists[playlist_index]
-                        .songs
-                        .insert(idx + 1, song_name.clone());
-
-                    let mut song_path = String::new();
-                    for song in &self.save_data.songs {
-                        if song.name == song_name {
-                            song_path = song.path.clone();
-                        }
+                let song_name = self.textarea.lines()[0].clone();
+                let mut song_path = String::new();
+                for song in &self.save_data.songs {
+                    if song.name == song_name {
+                        song_path = song.path.clone();
                     }
-
-                    self.songs.insert(
-                        idx + 1,
-                        Song {
-                            selected: false,
-                            name: song_name.clone(),
-                            path: song_path.clone(),
-                            playing: false,
-                        },
-                    );
-                    self.playlists[playlist_index].songs.insert(
-                        idx + 1,
-                        SerializableSong {
-                            name: song_name,
-                            path: song_path,
-                        },
-                    );
-                    self.exit_input_mode();
                 }
+
+                match self.cursor {
+                    Cursor::OnBack(playlist_idx) => {
+                        self.save_data.playlists[playlist_idx]
+                            .songs
+                            .insert(0, song_name.clone());
+    
+                        self.songs.insert(
+                            0,
+                            Song {
+                                selected: false,
+                                name: song_name.clone(),
+                                path: song_path.clone(),
+                                playing: false,
+                            },
+                        );
+                        self.playlists[playlist_idx].songs.insert(
+                            0,
+                            SerializableSong {
+                                name: song_name,
+                                path: song_path,
+                            },
+                        );
+                    }
+                    Cursor::Song(idx, playlist_idx) => {
+                        self.save_data.playlists[playlist_idx]
+                            .songs
+                            .insert(idx + 1, song_name.clone());
+    
+                        self.songs.insert(
+                            idx + 1,
+                            Song {
+                                selected: false,
+                                name: song_name.clone(),
+                                path: song_path.clone(),
+                                playing: false,
+                            },
+                        );
+                        self.playlists[playlist_idx].songs.insert(
+                            idx + 1,
+                            SerializableSong {
+                                name: song_name,
+                                path: song_path,
+                            },
+                        );
+                    }
+                    _ => unreachable!()
+                }
+                self.exit_input_mode();
             }
             Mode::Input(InputMode::AddSong) => {
                 let input = self.textarea.lines()[0].clone();
@@ -729,8 +754,6 @@ impl App<'_> {
             } else if idx == self.playlists.len() {
                 self.cursor = Cursor::Playlist(idx - 1);
                 self.playlists[idx - 1].selected = true;
-            } else {
-                self.playlists[idx - 1].selected = true;
             }
         } else if let Cursor::Song(idx, playlist_idx) = self.cursor {
             self.log = format!("Remove idx {}", idx);
@@ -748,8 +771,6 @@ impl App<'_> {
                 self.cursor = Cursor::OnBack(playlist_idx);
             } else if idx == self.songs.len() {
                 self.cursor = Cursor::Song(idx - 1, playlist_idx);
-                self.songs[idx - 1].selected = true;
-            } else {
                 self.songs[idx - 1].selected = true;
             }
         } else {
