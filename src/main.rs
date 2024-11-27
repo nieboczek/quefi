@@ -14,6 +14,7 @@ use std::{
 };
 
 mod app;
+mod spotify;
 mod youtube;
 
 #[cfg(target_os = "windows")]
@@ -24,6 +25,8 @@ pub const DLP_EXECUTABLE_NAME: &str = "yt-dlp";
 #[derive(Serialize, Deserialize, Clone)]
 struct Config {
     dlp_path: String,
+    spotify_client_id: String,
+    spotify_client_secret: String,
 }
 
 #[derive(Debug)]
@@ -33,6 +36,7 @@ pub enum Error {
     Timeout,
     InvalidJson,
     ReleaseNotFound,
+    YtMusicError,
 }
 
 impl From<std::io::Error> for Error {
@@ -55,6 +59,7 @@ impl Display for Error {
             Self::Timeout => write!(f, "Process timed out"),
             Self::InvalidJson => write!(f, "Tried to parse invalid JSON"),
             Self::ReleaseNotFound => write!(f, "Correct release of yt-dlp not found"),
+            Self::YtMusicError => write!(f, "Failed to search YT Music"),
         }
     }
 }
@@ -80,12 +85,13 @@ fn restore_terminal() -> io::Result<()> {
     Ok(())
 }
 
-fn main() -> io::Result<()> {
+#[tokio::main]
+async fn main() -> io::Result<()> {
     let terminal = init_terminal()?;
     let mut app = app::App::default();
 
     app.init()?;
-    app.run(terminal)?;
+    app.run(terminal).await?;
 
     restore_terminal()?;
     Ok(())

@@ -1,4 +1,4 @@
-use crate::{get_quefi_dir, youtube, Config};
+use crate::{get_quefi_dir, spotify, youtube, Config, Error};
 use ratatui::{
     backend::Backend,
     crossterm::event::{self, poll, Event, KeyCode, KeyEventKind},
@@ -7,7 +7,7 @@ use ratatui::{
     widgets::Block,
     Terminal,
 };
-use reqwest::blocking::Client;
+use reqwest::Client;
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -16,6 +16,7 @@ use std::{
     path::Path,
     time::Duration,
 };
+use tokio::task::JoinHandle;
 use tui_textarea::{CursorMove, Input, Key, TextArea};
 
 mod app_widget;
@@ -42,9 +43,11 @@ fn load_data() -> SaveData {
             let data = SaveData {
                 config: Config {
                     dlp_path: String::new(),
+                    spotify_client_id: String::new(),
+                    spotify_client_secret: String::new(),
                 },
-                playlists: vec![],
-                songs: vec![],
+                playlists: Vec::new(),
+                songs: Vec::new(),
             };
             save_data(&data);
             return data;
@@ -136,6 +139,7 @@ struct QueuedSong {
 }
 
 pub struct App<'app> {
+    err_join_handle: Option<JoinHandle<Result<(), Error>>>,
     _handle: OutputStreamHandle,
     song_queue: Vec<QueuedSong>,
     playlists: Vec<Playlist>,
@@ -148,6 +152,7 @@ pub struct App<'app> {
     songs: Vec<Song>,
     playing: Playing,
     cursor: Cursor,
+    #[allow(dead_code)] // TODO: Remove this
     client: Client,
     log: String,
     sink: Sink,
@@ -160,6 +165,13 @@ impl App<'_> {
             .timeout(Duration::from_secs(15))
             .build()
             .unwrap();
+
+        let _ = spotify::create_token(&client, "", "");
+        let _ = spotify::fetch_track_info("", "");
+        let _ = spotify::fetch_playlist_tracks("", "");
+        let _ = youtube::search(&client, "", "");
+        let _ = youtube::get_visitor_id(&client);
+
         let (stream, handle) = OutputStream::try_default().unwrap();
         let sink = Sink::try_new(&handle).unwrap();
         App {
@@ -167,6 +179,7 @@ impl App<'_> {
             _stream: stream,
             client,
             sink,
+            err_join_handle: None,
             last_queue_length: 0,
             song_queue: Vec::new(),
             save_data: load_data(),
@@ -182,7 +195,7 @@ impl App<'_> {
         }
     }
 
-    pub fn run(&mut self, mut terminal: Terminal<impl Backend>) -> io::Result<()> {
+    pub async fn run(&mut self, mut terminal: Terminal<impl Backend>) -> io::Result<()> {
         while !self.should_exit {
             terminal.draw(|frame| {
                 frame.render_widget(&mut *self, frame.area());
@@ -212,7 +225,7 @@ impl App<'_> {
                         },
                         Mode::Input(_) if key.kind == KeyEventKind::Press => match key.code {
                             KeyCode::Esc => self.exit_input_mode(),
-                            KeyCode::Enter => self.submit_input(),
+                            KeyCode::Enter => self.submit_input().await,
                             _ => {
                                 let input: Input = key.into();
                                 if !(input.key == Key::Char('m') && input.ctrl)
@@ -234,6 +247,11 @@ impl App<'_> {
             if self.sink.len() != self.last_queue_length && !self.song_queue.is_empty() {
                 self.last_queue_length = self.sink.len();
                 self.song_queue.remove(0);
+            }
+            if self.err_join_handle.is_some() {
+                if let Err(err) = self.err_join_handle.as_mut().unwrap().await.unwrap() {
+                    self.log = format!("{}", err);
+                }
             }
         }
         Ok(())
@@ -429,7 +447,7 @@ impl App<'_> {
         }
     }
 
-    fn submit_input(&mut self) {
+    async fn submit_input(&mut self) {
         if !self.valid_input {
             return;
         }
@@ -527,8 +545,12 @@ impl App<'_> {
                 self.exit_input_mode();
             }
             Mode::Input(InputMode::DownloadLink) => {
-                youtube::download_song(&self.save_data.config.dlp_path, &self.textarea.lines()[0])
-                    .expect("Failed to download a song");
+                let dlp_path = self.save_data.config.dlp_path.clone();
+                let input = self.textarea.lines()[0].clone();
+
+                self.err_join_handle = Some(tokio::spawn(async move {
+                    youtube::download_song(&dlp_path, &input).await
+                }));
                 self.exit_input_mode();
             }
             Mode::Input(InputMode::GetDlp) => {
@@ -536,7 +558,12 @@ impl App<'_> {
                     self.exit_input_mode();
                     return;
                 }
-                youtube::download_dlp(&self.client).expect("Failed to download dlp");
+
+                let client = self.client.clone();
+                self.err_join_handle =
+                    Some(tokio::spawn(
+                        async move { youtube::download_dlp(&client).await },
+                    ));
                 self.exit_input_mode();
             }
             _ => unreachable!(),
@@ -544,7 +571,11 @@ impl App<'_> {
     }
 
     fn download_link(&mut self) {
-        self.enter_input_mode(InputMode::DownloadLink);
+        if !Path::new(&self.save_data.config.dlp_path).exists() {
+            self.enter_input_mode(InputMode::GetDlp);
+        } else {
+            self.enter_input_mode(InputMode::DownloadLink);
+        }
     }
 
     fn stop_playing_current(&mut self) {

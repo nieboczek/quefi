@@ -19,6 +19,12 @@ impl Widget for &mut App<'_> {
                 Constraint::Length(1),
             ])
             .areas(area);
+
+            let [playlist_area, main_area] = Layout::horizontal([
+                Constraint::Percentage(20),
+                Constraint::Fill(1),
+            ]).areas(main_area);
+
             App::render_header(header_area, buf);
             self.render_list(main_area, buf);
             self.textarea.render(input_area, buf);

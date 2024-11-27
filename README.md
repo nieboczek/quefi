@@ -8,5 +8,9 @@ Figure out the rest! :)
 ## Screenshots
 #missing
 # TODO!!!
+- redesign
+- spotify playlist to quefi playlist:
+- add repeat
+- youtube music search
 - make mouse do stuff ;-;
 - discord integration (https://crates.io/crates/discord-rich-presence & https://discord.com/developers/applications/1298340402499289220/information)
