@@ -26,6 +26,7 @@ impl Widget for &mut App<'_> {
             ]).areas(main_area);
 
             App::render_header(header_area, buf);
+            self.render_playlists(playlist_area, buf);
             self.render_list(main_area, buf);
             self.textarea.render(input_area, buf);
             self.render_player(player_area, buf);
@@ -38,7 +39,14 @@ impl Widget for &mut App<'_> {
                 Constraint::Length(1),
             ])
             .areas(area);
+
+            let [playlist_area, main_area] = Layout::horizontal([
+                Constraint::Percentage(20),
+                Constraint::Fill(1),
+            ]).areas(main_area);
+
             App::render_header(header_area, buf);
+            self.render_playlists(playlist_area, buf);
             self.render_list(main_area, buf);
             self.render_player(player_area, buf);
             self.render_log(log_area, buf);
@@ -47,8 +55,14 @@ impl Widget for &mut App<'_> {
 }
 
 impl App<'_> {
+    fn render_playlists(&mut self, area: Rect, buf: &mut Buffer) {
+        let block = Block::bordered().title("Playlists").border_set(border::THICK);
+        let paragraph = Paragraph::new("test").block(block);
+        paragraph.render(area, buf);
+    }
+
     fn render_player(&mut self, area: Rect, buf: &mut Buffer) {
-        let block = Block::bordered().title("Player").border_set(border::DOUBLE);
+        let block = Block::bordered().title("Player").border_set(border::THICK);
 
         let pause_symbol = if self.sink.is_paused() { "||" } else { ">>" };
 
@@ -80,17 +94,16 @@ impl App<'_> {
             num = String::from("XX");
         }
 
-        // Using unicode "═" instead of the normal equal sign, because some fonts like to mess with multiple of equal signs
         Paragraph::new(format!(
             "{num} {title}{}🔈{:.0}% {}\n{pause_symbol} {}",
             // Spaces until sound controls won't fit
             " ".repeat((area.as_size().width - 22 - title.len() as u16) as usize),
             // Volume percentage
             self.sink.volume() * 100.,
-            // Volume as "equal signs"
-            "═".repeat((self.sink.volume() * 10.) as usize),
-            // Song progress as "equal signs"
-            "═".repeat(((area.as_size().width - 6) as f32 * (1. - remaining_time)) as usize),
+            // Volume
+            "━".repeat((self.sink.volume() * 10.) as usize),
+            // Song progress
+            "━".repeat(((area.as_size().width - 6) as f32 * (1. - remaining_time)) as usize),
         ))
         .block(block)
         .render(area, buf);
@@ -110,7 +123,7 @@ impl App<'_> {
         let block = Block::bordered()
             .title("List")
             .title_bottom(content)
-            .border_set(border::DOUBLE);
+            .border_set(border::THICK);
 
         if self.mode == Mode::Help {
             Paragraph::new(concat!(

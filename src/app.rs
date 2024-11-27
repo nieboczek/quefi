@@ -433,7 +433,7 @@ impl App<'_> {
             let block = Block::bordered()
                 .title(title)
                 .style(Style::default().light_green())
-                .border_set(border::DOUBLE);
+                .border_set(border::THICK);
             self.textarea.set_block(block);
             self.valid_input = true;
         } else {
@@ -441,7 +441,7 @@ impl App<'_> {
                 .title(title)
                 .title_bottom(bad_input)
                 .style(Style::default().light_red())
-                .border_set(border::DOUBLE);
+                .border_set(border::THICK);
             self.textarea.set_block(block);
             self.valid_input = false;
         }
