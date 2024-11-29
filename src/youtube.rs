@@ -3,7 +3,12 @@ use regex::Match;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{io, process::Stdio, fmt::Write, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    fmt::Write,
+    io,
+    process::Stdio,
+    time::{SystemTime, UNIX_EPOCH},
+};
 use tokio::{fs::File, io::copy, process::Command};
 
 #[cfg(not(target_os = "windows"))]

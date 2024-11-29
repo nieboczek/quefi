@@ -4,13 +4,14 @@ use ratatui::{
     crossterm::event::{self, poll, Event, KeyCode, KeyEventKind},
     style::{Style, Stylize},
     symbols::border,
-    widgets::Block,
+    widgets::{Block, ListState},
     Terminal,
 };
 use reqwest::Client;
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
 use serde::{Deserialize, Serialize};
 use std::{
+    fmt::format,
     fs::{create_dir_all, read_to_string, write, File},
     io::{self, ErrorKind},
     path::Path,
@@ -81,13 +82,25 @@ enum InputMode {
 }
 
 #[derive(PartialEq)]
-enum Cursor {
-    /// First `usize`: The selected song; Second `usize`: The playlist we're in.
-    Song(usize, usize),
-    Playlist(usize),
-    /// `usize`: The playlist we're in.
-    OnBack(usize),
-    NonePlaylist,
+enum Focused {
+    Right,
+    Left,
+}
+
+/// ## Possibly just use GlobalSongs instead of None in `App::default`
+#[derive(PartialEq)]
+enum Window {
+    None,
+    Songs,
+    GlobalSongs,
+    DownloadManager,
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+enum Selected {
+    None,
+    Focused,
+    Unfocused,
 }
 
 #[derive(PartialEq)]
@@ -113,7 +126,7 @@ struct SerializablePlaylist {
 #[derive(Clone)]
 struct Playlist {
     songs: Vec<SerializableSong>,
-    selected: bool,
+    selected: Selected,
     playing: bool,
     name: String,
 }
@@ -126,7 +139,7 @@ struct SerializableSong {
 
 #[derive(Debug, Clone)]
 struct Song {
-    selected: bool,
+    selected: Selected,
     name: String,
     path: String,
     playing: bool,
@@ -138,22 +151,24 @@ struct QueuedSong {
     duration: Duration,
 }
 
-pub struct App<'app> {
+pub struct App<'a> {
     err_join_handle: Option<JoinHandle<Result<(), Error>>>,
+    playlist_list_state: ListState,
     _handle: OutputStreamHandle,
     song_queue: Vec<QueuedSong>,
+    song_list_state: ListState,
     playlists: Vec<Playlist>,
     last_queue_length: usize,
-    textarea: TextArea<'app>,
+    textarea: TextArea<'a>,
     _stream: OutputStream,
     save_data: SaveData,
     should_exit: bool,
     valid_input: bool,
     songs: Vec<Song>,
     playing: Playing,
-    cursor: Cursor,
-    #[allow(dead_code)] // TODO: Remove this
+    focused: Focused,
     client: Client,
+    window: Window,
     log: String,
     sink: Sink,
     mode: Mode,
@@ -166,19 +181,18 @@ impl App<'_> {
             .build()
             .unwrap();
 
-        let _ = spotify::create_token(&client, "", "");
-        let _ = spotify::fetch_track_info("", "");
-        let _ = spotify::fetch_playlist_tracks("", "");
-        let _ = youtube::search(&client, "", "");
-        let _ = youtube::get_visitor_id(&client);
-
         let (stream, handle) = OutputStream::try_default().unwrap();
         let sink = Sink::try_new(&handle).unwrap();
-        App {
+
+        let mut a = App {
             _handle: handle,
             _stream: stream,
             client,
             sink,
+            window: Window::None,
+            playlist_list_state: ListState::default(),
+            song_list_state: ListState::default(),
+            focused: Focused::Left,
             err_join_handle: None,
             last_queue_length: 0,
             song_queue: Vec::new(),
@@ -186,13 +200,15 @@ impl App<'_> {
             should_exit: false,
             playlists: Vec::new(),
             songs: Vec::new(),
-            cursor: Cursor::Playlist(0),
             playing: Playing::None,
             log: String::from("Initialized!"),
             mode: Mode::Normal,
             textarea: TextArea::default(),
             valid_input: false,
-        }
+        };
+        // TODO: Remove this (just testing stuff), can break stuff if no playlist
+        a.playlist_list_state.select_first();
+        a
     }
 
     pub async fn run(&mut self, mut terminal: Terminal<impl Backend>) -> io::Result<()> {
@@ -210,14 +226,15 @@ impl App<'_> {
                             KeyCode::Char(' ') => self.pause(),
                             KeyCode::Char('o') => self.seek_back(),
                             KeyCode::Char('p') => self.seek_forward(),
-                            KeyCode::Char('e') => self.enter_playlist(),
                             KeyCode::Char('a') => self.add_item(),
                             KeyCode::Char('n') => self.remove_current(),
                             KeyCode::Char('f') => self.sink.skip_one(),
-                            KeyCode::Char('l') => self.enter_input_mode(InputMode::AddSong),
-                            KeyCode::Char('d') => self.download_link(),
-                            KeyCode::Left => self.decrease_volume(),
-                            KeyCode::Right => self.increase_volume(),
+                            KeyCode::Char('y') => self.enter_input_mode(InputMode::AddSong), // TODO: Open global song manager
+                            KeyCode::Char('d') => self.open_download_manager(),
+                            KeyCode::Char('u') => self.decrease_volume(),
+                            KeyCode::Char('i') => self.increase_volume(),
+                            KeyCode::Left => self.select_left_window(),
+                            KeyCode::Right => self.select_right_window(),
                             KeyCode::Down => self.select_next(),
                             KeyCode::Up => self.select_previous(),
                             KeyCode::Enter => self.play_current(),
@@ -257,6 +274,34 @@ impl App<'_> {
         Ok(())
     }
 
+    fn select_left_window(&mut self) {
+        self.focused = Focused::Left;
+
+        if self.window == Window::Songs {
+            if let Some(idx) = self.song_list_state.selected() {
+                self.songs[idx].selected = Selected::Unfocused;
+            }
+        }
+
+        if let Some(idx) = self.playlist_list_state.selected() {
+            self.playlists[idx].selected = Selected::Focused;
+        }
+    }
+
+    fn select_right_window(&mut self) {
+        self.focused = Focused::Right;
+
+        if self.window == Window::Songs {
+            if let Some(idx) = self.song_list_state.selected() {
+                self.songs[idx].selected = Selected::Focused;
+            }
+        }
+
+        if let Some(idx) = self.playlist_list_state.selected() {
+            self.playlists[idx].selected = Selected::Unfocused;
+        }
+    }
+
     fn seek_back(&mut self) {
         if !self.song_queue.is_empty() {
             self.sink
@@ -289,20 +334,21 @@ impl App<'_> {
         }
     }
 
-    fn enter_playlist(&mut self) {
-        if let Cursor::Playlist(idx) = self.cursor {
+    fn see_songs_in_playlist(&mut self) {
+        if let Some(idx) = self.playlist_list_state.selected() {
+            self.songs.clear();
+
             for song in &self.playlists[idx].songs {
                 self.songs.push(Song {
-                    selected: false,
+                    selected: Selected::None,
                     name: song.name.clone(),
                     path: song.path.clone(),
                     playing: false,
                 });
             }
-            self.cursor = Cursor::OnBack(idx);
-        } else if let Cursor::Song(_, playlist_idx) | Cursor::OnBack(playlist_idx) = self.cursor {
-            self.cursor = Cursor::Playlist(playlist_idx);
-            self.songs.clear();
+
+            self.window = Window::Songs;
+            self.song_list_state.select_first();
         }
     }
 
@@ -461,14 +507,11 @@ impl App<'_> {
                 });
                 self.playlists.push(Playlist {
                     songs: Vec::new(),
-                    selected: false,
+                    selected: Selected::None,
                     playing: false,
                     name: input.clone(),
                 });
-                if self.cursor == Cursor::NonePlaylist {
-                    self.playlists[0].selected = true;
-                    self.cursor = Cursor::Playlist(0);
-                }
+                // TODO: Select new playlist if no playlists are there
                 self.exit_input_mode();
             }
             Mode::Input(InputMode::AddSongToPlaylist) => {
@@ -480,53 +523,35 @@ impl App<'_> {
                     }
                 }
 
-                match self.cursor {
-                    Cursor::OnBack(playlist_idx) => {
-                        self.save_data.playlists[playlist_idx]
-                            .songs
-                            .insert(0, song_name.clone());
+                let playlist_idx = self.playlist_list_state.selected().unwrap();
+                let idx = if let Some(idx) = self.song_list_state.selected() {
+                    idx + 1
+                } else {
+                    0
+                };
 
-                        self.songs.insert(
-                            0,
-                            Song {
-                                selected: false,
-                                name: song_name.clone(),
-                                path: song_path.clone(),
-                                playing: false,
-                            },
-                        );
-                        self.playlists[playlist_idx].songs.insert(
-                            0,
-                            SerializableSong {
-                                name: song_name,
-                                path: song_path,
-                            },
-                        );
-                    }
-                    Cursor::Song(idx, playlist_idx) => {
-                        self.save_data.playlists[playlist_idx]
-                            .songs
-                            .insert(idx + 1, song_name.clone());
+                self.save_data.playlists[playlist_idx]
+                    .songs
+                    .insert(idx, song_name.clone());
 
-                        self.songs.insert(
-                            idx + 1,
-                            Song {
-                                selected: false,
-                                name: song_name.clone(),
-                                path: song_path.clone(),
-                                playing: false,
-                            },
-                        );
-                        self.playlists[playlist_idx].songs.insert(
-                            idx + 1,
-                            SerializableSong {
-                                name: song_name,
-                                path: song_path,
-                            },
-                        );
-                    }
-                    _ => unreachable!(),
-                }
+                self.songs.insert(
+                    idx,
+                    Song {
+                        selected: Selected::None,
+                        name: song_name.clone(),
+                        path: song_path.clone(),
+                        playing: false,
+                    },
+                );
+
+                self.playlists[playlist_idx].songs.insert(
+                    idx,
+                    SerializableSong {
+                        name: song_name,
+                        path: song_path,
+                    },
+                );
+
                 self.exit_input_mode();
             }
             Mode::Input(InputMode::AddSong) => {
@@ -570,7 +595,8 @@ impl App<'_> {
         }
     }
 
-    fn download_link(&mut self) {
+    /// TODO: Actually open download manager
+    fn open_download_manager(&mut self) {
         if !Path::new(&self.save_data.config.dlp_path).exists() {
             self.enter_input_mode(InputMode::GetDlp);
         } else {
@@ -593,8 +619,8 @@ impl App<'_> {
     }
 
     fn play_current(&mut self) {
-        match self.cursor {
-            Cursor::Playlist(idx) => {
+        if self.focused == Focused::Left {
+            if let Some(idx) = self.playlist_list_state.selected() {
                 match self.playing {
                     Playing::Playlist(playing_idx) => {
                         self.stop_playing_current();
@@ -633,7 +659,8 @@ impl App<'_> {
                     }
                 };
             }
-            Cursor::Song(idx, _) => match self.playing {
+        } else if let Some(idx) = self.song_list_state.selected() {
+            match self.playing {
                 Playing::Playlist(_) => {
                     self.stop_playing_current();
                     self.songs[idx].playing = true;
@@ -663,76 +690,63 @@ impl App<'_> {
                     self.last_queue_length = self.sink.len();
                     self.sink.play();
                 }
-            },
-            _ => self.enter_playlist(),
+            }
         }
     }
 
     fn select_next(&mut self) {
-        match self.cursor {
-            Cursor::Playlist(idx) => {
+        if self.focused == Focused::Left {
+            if let Some(idx) = self.playlist_list_state.selected() {
                 if idx + 1 == self.playlists.len() {
-                    self.playlists[idx].selected = false;
-                    self.cursor = Cursor::Playlist(0);
-                    self.playlists[0].selected = true;
+                    self.playlists[idx].selected = Selected::None;
+                    self.playlist_list_state.select_first();
+                    self.playlists[0].selected = Selected::Focused;
                 } else {
-                    self.playlists[idx].selected = false;
-                    self.cursor = Cursor::Playlist(idx + 1);
-                    self.playlists[idx + 1].selected = true;
+                    self.playlists[idx].selected = Selected::None;
+                    self.playlist_list_state.select(Some(idx + 1));
+                    self.playlists[idx + 1].selected = Selected::Focused;
                 }
             }
-            Cursor::Song(idx, playlist_idx) => {
-                if idx + 1 == self.songs.len() {
-                    self.songs[idx].selected = false;
-                    self.cursor = Cursor::OnBack(playlist_idx);
-                } else {
-                    self.songs[idx].selected = false;
-                    self.cursor = Cursor::Song(idx + 1, playlist_idx);
-                    self.songs[idx + 1].selected = true;
-                }
+            self.see_songs_in_playlist();
+        } else if let Some(idx) = self.song_list_state.selected() {
+            if idx + 1 == self.songs.len() {
+                self.songs[idx].selected = Selected::None;
+                self.song_list_state.select_first();
+                self.songs[0].selected = Selected::Focused;
+            } else {
+                self.songs[idx].selected = Selected::None;
+                self.song_list_state.select(Some(idx + 1));
+                self.songs[idx + 1].selected = Selected::Focused;
             }
-            Cursor::OnBack(playlist_idx) => {
-                if !self.songs.is_empty() {
-                    self.cursor = Cursor::Song(0, playlist_idx);
-                    self.songs[0].selected = true;
-                }
-            }
-            _ => {}
         }
     }
 
     fn select_previous(&mut self) {
-        match self.cursor {
-            Cursor::Playlist(idx) => {
+        if self.focused == Focused::Left {
+            if let Some(idx) = self.playlist_list_state.selected() {
                 if idx == 0 {
-                    self.playlists[idx].selected = false;
+                    self.playlists[idx].selected = Selected::None;
                     let new_index = self.playlists.len() - 1;
-                    self.cursor = Cursor::Playlist(new_index);
-                    self.playlists[new_index].selected = true;
+                    self.playlist_list_state.select(Some(new_index));
+                    self.playlists[new_index].selected = Selected::Focused;
                 } else {
-                    self.playlists[idx].selected = false;
-                    self.cursor = Cursor::Playlist(idx - 1);
-                    self.playlists[idx - 1].selected = true;
+                    self.playlists[idx].selected = Selected::None;
+                    self.playlist_list_state.select(Some(idx - 1));
+                    self.playlists[idx - 1].selected = Selected::Focused;
                 }
             }
-            Cursor::Song(idx, playlist_idx) => {
-                if idx == 0 {
-                    self.songs[idx].selected = false;
-                    self.cursor = Cursor::OnBack(playlist_idx);
-                } else {
-                    self.songs[idx].selected = false;
-                    self.cursor = Cursor::Song(idx - 1, playlist_idx);
-                    self.songs[idx - 1].selected = true;
-                }
+            self.see_songs_in_playlist();
+        } else if let Some(idx) = self.song_list_state.selected() {
+            if idx == 0 {
+                self.songs[idx].selected = Selected::None;
+                let new_index = self.songs.len() - 1;
+                self.song_list_state.select(Some(new_index));
+                self.songs[new_index].selected = Selected::Focused;
+            } else {
+                self.songs[idx].selected = Selected::None;
+                self.song_list_state.select(Some(idx - 1));
+                self.songs[idx - 1].selected = Selected::Focused;
             }
-            Cursor::OnBack(playlist_idx) => {
-                if !self.songs.is_empty() {
-                    let new_selection = self.songs.len() - 1;
-                    self.cursor = Cursor::Song(new_selection, playlist_idx);
-                    self.songs[new_selection].selected = true;
-                }
-            }
-            _ => {}
         }
     }
 
@@ -762,15 +776,20 @@ impl App<'_> {
     }
 
     fn add_item(&mut self) {
-        if let Cursor::Playlist(_) | Cursor::NonePlaylist = self.cursor {
-            self.enter_input_mode(InputMode::AddPlaylist);
+        if self.focused == Focused::Right {
+            match self.window {
+                Window::Songs => self.enter_input_mode(InputMode::AddSongToPlaylist),
+                Window::GlobalSongs => self.log = String::from("TODO! GlobalSongs"),
+                Window::DownloadManager => self.log = String::from("TODO! DownloadManager"),
+                _ => {}
+            }
         } else {
-            self.enter_input_mode(InputMode::AddSongToPlaylist);
+            self.enter_input_mode(InputMode::AddPlaylist);
         }
     }
 
     fn remove_current(&mut self) {
-        if let Cursor::Playlist(idx) = self.cursor {
+        if let Some(idx) = self.playlist_list_state.selected() {
             self.log = format!("Remove index {idx}");
             self.playlists.remove(idx);
             self.save_data.playlists.remove(idx);
@@ -780,14 +799,15 @@ impl App<'_> {
                     self.playing = Playing::None;
                 }
             }
-            if self.playlists.is_empty() {
-                self.cursor = Cursor::NonePlaylist;
-            } else if idx == self.playlists.len() {
-                self.cursor = Cursor::Playlist(idx - 1);
-                self.playlists[idx - 1].selected = true;
+
+            if idx == self.playlists.len() {
+                self.playlist_list_state.select(Some(idx - 1));
+                self.playlists[idx - 1].selected = Selected::Focused;
             }
-        } else if let Cursor::Song(idx, playlist_idx) = self.cursor {
-            self.log = format!("Remove idx {}", idx);
+        } else if let Some(idx) = self.song_list_state.selected() {
+            let playlist_idx = self.playlist_list_state.selected().unwrap();
+            self.log = format!("Remove index {idx}");
+
             self.songs.remove(idx);
             self.playlists[playlist_idx].songs.remove(idx);
             self.save_data.playlists[playlist_idx].songs.remove(idx);
@@ -798,11 +818,9 @@ impl App<'_> {
                 }
             }
 
-            if self.songs.is_empty() {
-                self.cursor = Cursor::OnBack(playlist_idx);
-            } else if idx == self.songs.len() {
-                self.cursor = Cursor::Song(idx - 1, playlist_idx);
-                self.songs[idx - 1].selected = true;
+            if idx == self.songs.len() {
+                self.song_list_state.select(Some(idx - 1));
+                self.songs[idx - 1].selected = Selected::Focused;
             }
         } else {
             self.log = String::from("Can't remove!");
@@ -810,8 +828,9 @@ impl App<'_> {
     }
 
     pub fn init(&mut self) -> io::Result<()> {
-        self.sink.set_volume(0.25); // For testing purposes (so my ears don't blow up)
+        self.sink.set_volume(0.25);
         let mut first = true;
+
         for playlist in &self.save_data.playlists {
             let songs = self
                 .save_data
@@ -823,7 +842,11 @@ impl App<'_> {
             self.playlists.push(Playlist {
                 songs,
                 name: playlist.name.clone(),
-                selected: first,
+                selected: if first {
+                    Selected::Focused
+                } else {
+                    Selected::None
+                },
                 playing: false,
             });
             first = false;

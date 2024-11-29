@@ -1,11 +1,10 @@
-use crate::app::{App, Cursor, Mode, Playlist, Song};
+use crate::app::{App, Mode, Playlist, Selected, Song};
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
     style::Stylize,
     symbols::border,
-    text::Text,
-    widgets::{Block, Paragraph, Widget},
+    widgets::{Block, List, ListItem, Paragraph, StatefulWidget, Widget},
 };
 
 impl Widget for &mut App<'_> {
@@ -20,14 +19,13 @@ impl Widget for &mut App<'_> {
             ])
             .areas(area);
 
-            let [playlist_area, main_area] = Layout::horizontal([
-                Constraint::Percentage(20),
-                Constraint::Fill(1),
-            ]).areas(main_area);
+            let [playlist_area, main_area] =
+                Layout::horizontal([Constraint::Min(24), Constraint::Percentage(100)])
+                    .areas(main_area);
 
             App::render_header(header_area, buf);
             self.render_playlists(playlist_area, buf);
-            self.render_list(main_area, buf);
+            self.render_window(main_area, buf);
             self.textarea.render(input_area, buf);
             self.render_player(player_area, buf);
             self.render_log(log_area, buf);
@@ -40,14 +38,13 @@ impl Widget for &mut App<'_> {
             ])
             .areas(area);
 
-            let [playlist_area, main_area] = Layout::horizontal([
-                Constraint::Percentage(20),
-                Constraint::Fill(1),
-            ]).areas(main_area);
+            let [playlist_area, main_area] =
+                Layout::horizontal([Constraint::Min(24), Constraint::Percentage(100)])
+                    .areas(main_area);
 
             App::render_header(header_area, buf);
             self.render_playlists(playlist_area, buf);
-            self.render_list(main_area, buf);
+            self.render_window(main_area, buf);
             self.render_player(player_area, buf);
             self.render_log(log_area, buf);
         }
@@ -56,9 +53,16 @@ impl Widget for &mut App<'_> {
 
 impl App<'_> {
     fn render_playlists(&mut self, area: Rect, buf: &mut Buffer) {
-        let block = Block::bordered().title("Playlists").border_set(border::THICK);
-        let paragraph = Paragraph::new("test").block(block);
-        paragraph.render(area, buf);
+        let block = Block::bordered()
+            .title("Playlists")
+            .border_set(border::THICK);
+
+        StatefulWidget::render(
+            List::new(&self.playlists).block(block),
+            area,
+            buf,
+            &mut self.playlist_list_state,
+        );
     }
 
     fn render_player(&mut self, area: Rect, buf: &mut Buffer) {
@@ -109,20 +113,10 @@ impl App<'_> {
         .render(area, buf);
     }
 
-    fn render_list(&mut self, area: Rect, buf: &mut Buffer) {
-        let content = if let Mode::Input(_) = self.mode {
-            if self.valid_input {
-                "Esc - discard & exit input mode   Enter - submit input"
-            } else {
-                "Esc - discard & exit input mode"
-            }
-        } else {
-            "q - quit   h - help"
-        };
-
+    fn render_window(&mut self, area: Rect, buf: &mut Buffer) {
         let block = Block::bordered()
-            .title("List")
-            .title_bottom(content)
+            .title("Window")
+            .title_bottom("q - quit   h - help")
             .border_set(border::THICK);
 
         if self.mode == Mode::Help {
@@ -132,44 +126,24 @@ impl App<'_> {
                 "\n  h - display this text",
                 "\n  enter - play song/playlist",
                 "\n  space - pause song/playlist",
-                "\n  e - enter a playlist (see songs inside)",
                 "\n  a - add song/playlist",
                 "\n  n - remove song/playlist",
                 "\n  f - skip song",
-                "\n  l - add song globally",
-                "\n  d - download video from YouTube as mp3",
-                "\n  o - seek back 5 seconds",
-                "\n  p - seek forward 5 seconds",
+                "\n  y - open global song manager",
+                "\n  d - open download manager",
+                "\n  u/i - decrease/increase volume",
+                "\n  o/p - seek backward/forward 5 seconds",
                 "\n  up/down - select previous/next item",
-                "\n  left/right - decrease/increase volume",
             ))
             .block(block)
             .render(area, buf);
-            return;
-        }
-
-        if let Cursor::Playlist(_) | Cursor::NonePlaylist = self.cursor {
-            Paragraph::new(
-                self.playlists
-                    .iter()
-                    .map(|playlist| playlist.to_string())
-                    .collect::<Vec<String>>()
-                    .join("\n"),
-            )
-            .block(block)
-            .render(area, buf);
         } else {
-            let mut text = if let Cursor::OnBack(_) = self.cursor {
-                Text::from("💲 [Back]".bold())
-            } else {
-                Text::from("   [Back]".bold())
-            };
-
-            self.songs
-                .iter()
-                .for_each(|song| text.push_line(song.to_string()));
-
-            Paragraph::new(text).block(block).render(area, buf);
+            StatefulWidget::render(
+                List::new(&self.songs).block(block),
+                area,
+                buf,
+                &mut self.song_list_state,
+            );
         }
     }
 
@@ -187,32 +161,34 @@ impl App<'_> {
     }
 }
 
-impl ToString for Song {
-    fn to_string(&self) -> String {
-        let mut prefix = String::new();
-        if self.selected {
-            prefix.push_str("💲 ");
-        } else {
-            prefix.push_str("   "); // 3x space because emojis take up 2x the space a normal letter does
-        }
-        if self.playing {
+impl From<&Playlist> for ListItem<'_> {
+    fn from(value: &Playlist) -> Self {
+        let mut prefix = match value.selected {
+            Selected::None => String::from("   "),
+            Selected::Focused => String::from("⮕  "),
+            Selected::Unfocused => String::from("⇨  "),
+        };
+
+        if value.playing {
             prefix.push_str("🔈 ");
         }
-        format!("{}{}", prefix, self.name)
+
+        ListItem::from(format!("{}{}", prefix, value.name))
     }
 }
 
-impl ToString for Playlist {
-    fn to_string(&self) -> String {
-        let mut prefix = String::new();
-        if self.selected {
-            prefix.push_str("💲 ");
-        } else {
-            prefix.push_str("   "); // 3x space because emojis take up 2x the space a normal letter does
-        }
-        if self.playing {
+impl From<&Song> for ListItem<'_> {
+    fn from(value: &Song) -> Self {
+        let mut prefix = match value.selected {
+            Selected::None => String::from("   "),
+            Selected::Focused => String::from("⮕  "),
+            Selected::Unfocused => String::from("⇨  "),
+        };
+
+        if value.playing {
             prefix.push_str("🔈 ");
         }
-        format!("{}{}", prefix, self.name)
+
+        ListItem::from(format!("{}{}", prefix, value.name))
     }
 }
