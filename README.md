@@ -8,9 +8,11 @@ Figure out the rest! :)
 ## Screenshots
 #missing
 # TODO!!!
-- redesign
-- spotify playlist to quefi playlist:
+- BUG: when adding new song to playlist, and trying to play it, you now have 2 playing icons, only sometimes??????
+- download manager:
+  - spotify playlist to quefi playlist
+- global song manager
 - add repeat
-- youtube music search
+- redesign
 - make mouse do stuff ;-;
 - discord integration (https://crates.io/crates/discord-rich-presence & https://discord.com/developers/applications/1298340402499289220/information)

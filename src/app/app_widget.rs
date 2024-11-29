@@ -7,6 +7,8 @@ use ratatui::{
     widgets::{Block, List, ListItem, Paragraph, StatefulWidget, Widget},
 };
 
+use super::Window;
+
 impl Widget for &mut App<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         if let Mode::Input(_) = self.mode {
@@ -115,7 +117,12 @@ impl App<'_> {
 
     fn render_window(&mut self, area: Rect, buf: &mut Buffer) {
         let block = Block::bordered()
-            .title("Window")
+            .title(match self.window {
+                Window::Songs => "Songs",
+                Window::GlobalSongs => "Global song manager",
+                Window::DownloadManager => "Download manager",
+                Window::None => "",
+            })
             .title_bottom("q - quit   h - help")
             .border_set(border::THICK);
 
@@ -165,7 +172,7 @@ impl From<&Playlist> for ListItem<'_> {
     fn from(value: &Playlist) -> Self {
         let mut prefix = match value.selected {
             Selected::None => String::from("   "),
-            Selected::Focused => String::from("⮕  "),
+            Selected::Focused => String::from("►  "),
             Selected::Unfocused => String::from("⇨  "),
         };
 
@@ -181,7 +188,7 @@ impl From<&Song> for ListItem<'_> {
     fn from(value: &Song) -> Self {
         let mut prefix = match value.selected {
             Selected::None => String::from("   "),
-            Selected::Focused => String::from("⮕  "),
+            Selected::Focused => String::from("►  "),
             Selected::Unfocused => String::from("⇨  "),
         };
 
