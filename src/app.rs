@@ -11,7 +11,6 @@ use reqwest::Client;
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
 use serde::{Deserialize, Serialize};
 use std::{
-    fmt::format,
     fs::{create_dir_all, read_to_string, write, File},
     io::{self, ErrorKind},
     path::Path,
@@ -77,7 +76,7 @@ enum InputMode {
     AddPlaylist,
     AddSongToPlaylist,
     ChooseFile(String),
-    AddSong,
+    AddGlobalSong,
     GetDlp,
 }
 
@@ -105,6 +104,7 @@ enum Selected {
 
 #[derive(PartialEq)]
 enum Playing {
+    GlobalSong(usize),
     Playlist(usize),
     Song(usize),
     None,
@@ -153,12 +153,14 @@ struct QueuedSong {
 
 pub struct App<'a> {
     err_join_handle: Option<JoinHandle<Result<(), Error>>>,
+    global_song_list_state: ListState,
     playlist_list_state: ListState,
     _handle: OutputStreamHandle,
     song_queue: Vec<QueuedSong>,
     song_list_state: ListState,
     playlists: Vec<Playlist>,
     last_queue_length: usize,
+    global_songs: Vec<Song>,
     textarea: TextArea<'a>,
     _stream: OutputStream,
     save_data: SaveData,
@@ -169,6 +171,7 @@ pub struct App<'a> {
     focused: Focused,
     client: Client,
     window: Window,
+    repeat: bool,
     log: String,
     sink: Sink,
     mode: Mode,
@@ -184,13 +187,15 @@ impl App<'_> {
         let (stream, handle) = OutputStream::try_default().unwrap();
         let sink = Sink::try_new(&handle).unwrap();
 
-        let mut a = App {
+        App {
             _handle: handle,
             _stream: stream,
             client,
             sink,
-            window: Window::None,
-            playlist_list_state: ListState::default(),
+            repeat: false,
+            window: Window::Songs,
+            playlist_list_state: ListState::default().with_selected(Some(0)),
+            global_song_list_state: ListState::default().with_selected(Some(0)),
             song_list_state: ListState::default(),
             focused: Focused::Left,
             err_join_handle: None,
@@ -198,6 +203,7 @@ impl App<'_> {
             song_queue: Vec::new(),
             save_data: load_data(),
             should_exit: false,
+            global_songs: Vec::new(),
             playlists: Vec::new(),
             songs: Vec::new(),
             playing: Playing::None,
@@ -205,10 +211,7 @@ impl App<'_> {
             mode: Mode::Normal,
             textarea: TextArea::default(),
             valid_input: false,
-        };
-        // TODO: Remove this (just testing stuff), can break stuff if no playlist
-        a.playlist_list_state.select_first();
-        a
+        }
     }
 
     pub async fn run(&mut self, mut terminal: Terminal<impl Backend>) -> io::Result<()> {
@@ -222,21 +225,22 @@ impl App<'_> {
                     match self.mode {
                         Mode::Normal if key.kind == KeyEventKind::Press => match key.code {
                             KeyCode::Char('q') => self.save_and_exit(),
-                            KeyCode::Char('h') => self.help(),
+                            KeyCode::Char('y') => self.help(),
                             KeyCode::Char(' ') => self.pause(),
                             KeyCode::Char('o') => self.seek_back(),
                             KeyCode::Char('p') => self.seek_forward(),
                             KeyCode::Char('a') => self.add_item(),
                             KeyCode::Char('n') => self.remove_current(),
                             KeyCode::Char('f') => self.sink.skip_one(),
-                            KeyCode::Char('y') => self.enter_input_mode(InputMode::AddSong), // TODO: Open global song manager
+                            KeyCode::Char('r') => self.repeat = !self.repeat,
+                            KeyCode::Char('g') => self.window = Window::GlobalSongs,
                             KeyCode::Char('d') => self.open_download_manager(),
                             KeyCode::Char('u') => self.decrease_volume(),
                             KeyCode::Char('i') => self.increase_volume(),
-                            KeyCode::Left => self.select_left_window(),
-                            KeyCode::Right => self.select_right_window(),
-                            KeyCode::Down => self.select_next(),
-                            KeyCode::Up => self.select_previous(),
+                            KeyCode::Char('h') | KeyCode::Left => self.select_left_window(),
+                            KeyCode::Char('l') | KeyCode::Right => self.select_right_window(),
+                            KeyCode::Char('j') | KeyCode::Down => self.select_next(),
+                            KeyCode::Char('k') | KeyCode::Up => self.select_previous(),
                             KeyCode::Enter => self.play_current(),
                             _ => {}
                         },
@@ -253,7 +257,7 @@ impl App<'_> {
                             }
                         },
                         Mode::Help if key.kind == KeyEventKind::Press => match key.code {
-                            KeyCode::Char('h') => self.help(),
+                            KeyCode::Char('y') => self.help(),
                             KeyCode::Char('q') => self.save_and_exit(),
                             _ => {}
                         },
@@ -277,10 +281,19 @@ impl App<'_> {
     fn select_left_window(&mut self) {
         self.focused = Focused::Left;
 
-        if self.window == Window::Songs {
-            if let Some(idx) = self.song_list_state.selected() {
-                self.songs[idx].selected = Selected::Unfocused;
+        match self.window {
+            Window::Songs => {
+                if let Some(idx) = self.song_list_state.selected() {
+                    self.songs[idx].selected = Selected::Unfocused;
+                }
             }
+            Window::GlobalSongs => {
+                if let Some(idx) = self.global_song_list_state.selected() {
+                    self.global_songs[idx].selected = Selected::Unfocused;
+                }
+            }
+            Window::DownloadManager => self.log = String::from("tooddddd"),
+            Window::None => {}
         }
 
         if let Some(idx) = self.playlist_list_state.selected() {
@@ -291,10 +304,19 @@ impl App<'_> {
     fn select_right_window(&mut self) {
         self.focused = Focused::Right;
 
-        if self.window == Window::Songs {
-            if let Some(idx) = self.song_list_state.selected() {
-                self.songs[idx].selected = Selected::Focused;
+        match self.window {
+            Window::Songs => {
+                if let Some(idx) = self.song_list_state.selected() {
+                    self.songs[idx].selected = Selected::Focused;
+                }
             }
+            Window::GlobalSongs => {
+                if let Some(idx) = self.global_song_list_state.selected() {
+                    self.global_songs[idx].selected = Selected::Focused;
+                }
+            }
+            Window::DownloadManager => self.log = String::from("tood"),
+            Window::None => {}
         }
 
         if let Some(idx) = self.playlist_list_state.selected() {
@@ -420,7 +442,7 @@ impl App<'_> {
                     String::from("Song doesn't exist"),
                 );
             }
-            Mode::Input(InputMode::AddSong) => {
+            Mode::Input(InputMode::AddGlobalSong) => {
                 let text = self.textarea.lines()[0].trim();
                 let mut name_exists = false;
                 for song in &self.save_data.songs {
@@ -554,7 +576,7 @@ impl App<'_> {
 
                 self.exit_input_mode();
             }
-            Mode::Input(InputMode::AddSong) => {
+            Mode::Input(InputMode::AddGlobalSong) => {
                 let input = self.textarea.lines()[0].clone();
                 self.textarea.move_cursor(CursorMove::Head);
                 self.textarea.delete_line_by_end();
@@ -610,6 +632,9 @@ impl App<'_> {
                 self.playlists[idx].playing = false
             }
             Playing::Song(idx) if !self.songs.is_empty() => self.songs[idx].playing = false,
+            Playing::GlobalSong(idx) if !self.global_songs.is_empty() => {
+                self.global_songs[idx].playing = false
+            }
             Playing::None => panic!("Tried to stop playing Playing::None"),
             _ => {}
         }
@@ -646,6 +671,17 @@ impl App<'_> {
                         self.log = format!("Queue length: {}", self.sink.len());
                         self.sink.play();
                     }
+                    Playing::GlobalSong(_) => {
+                        self.stop_playing_current();
+                        self.songs[idx].playing = true;
+                        self.playing = Playing::Song(idx);
+                        self.play_path(
+                            &self.songs[idx].name.clone(),
+                            &self.songs[idx].path.clone(),
+                        );
+                        self.last_queue_length = self.sink.len();
+                        self.sink.play();
+                    }
                     Playing::None => {
                         self.playlists[idx].playing = true;
                         self.playing = Playing::Playlist(idx);
@@ -659,37 +695,114 @@ impl App<'_> {
                     }
                 };
             }
-        } else if let Some(idx) = self.song_list_state.selected() {
-            match self.playing {
-                Playing::Playlist(_) => {
-                    self.stop_playing_current();
-                    self.songs[idx].playing = true;
-                    self.playing = Playing::Song(idx);
-                    self.play_path(&self.songs[idx].name.clone(), &self.songs[idx].path.clone());
-                    self.last_queue_length = self.sink.len();
-                    self.sink.play();
-                }
-                Playing::Song(playing_idx) => {
-                    self.stop_playing_current();
-                    if playing_idx != idx {
-                        self.songs[idx].playing = true;
-                        self.playing = Playing::Song(idx);
-                        self.play_path(
-                            &self.songs[idx].name.clone(),
-                            &self.songs[idx].path.clone(),
-                        );
-                        self.last_queue_length = self.sink.len();
-                        self.sink.play();
+        } else {
+            match self.window {
+                Window::Songs => {
+                    if let Some(idx) = self.song_list_state.selected() {
+                        match self.playing {
+                            Playing::Playlist(_) => {
+                                self.stop_playing_current();
+                                self.songs[idx].playing = true;
+                                self.playing = Playing::Song(idx);
+                                self.play_path(
+                                    &self.songs[idx].name.clone(),
+                                    &self.songs[idx].path.clone(),
+                                );
+                                self.last_queue_length = self.sink.len();
+                                self.sink.play();
+                            }
+                            Playing::Song(playing_idx) => {
+                                self.stop_playing_current();
+                                if playing_idx != idx {
+                                    self.songs[idx].playing = true;
+                                    self.playing = Playing::Song(idx);
+                                    self.play_path(
+                                        &self.songs[idx].name.clone(),
+                                        &self.songs[idx].path.clone(),
+                                    );
+                                    self.last_queue_length = self.sink.len();
+                                    self.sink.play();
+                                }
+                            }
+                            Playing::GlobalSong(_) => {
+                                self.stop_playing_current();
+                                self.songs[idx].playing = true;
+                                self.playing = Playing::Song(idx);
+                                self.play_path(
+                                    &self.songs[idx].name.clone(),
+                                    &self.songs[idx].path.clone(),
+                                );
+                                self.last_queue_length = self.sink.len();
+                                self.sink.play();
+                            }
+                            Playing::None => {
+                                self.songs[idx].playing = true;
+                                self.playing = Playing::Song(idx);
+                                self.song_queue.clear();
+                                self.play_path(
+                                    &self.songs[idx].name.clone(),
+                                    &self.songs[idx].path.clone(),
+                                );
+                                self.last_queue_length = self.sink.len();
+                                self.sink.play();
+                            }
+                        }
                     }
                 }
-                Playing::None => {
-                    self.songs[idx].playing = true;
-                    self.playing = Playing::Song(idx);
-                    self.song_queue.clear();
-                    self.play_path(&self.songs[idx].name.clone(), &self.songs[idx].path.clone());
-                    self.last_queue_length = self.sink.len();
-                    self.sink.play();
+                Window::GlobalSongs => {
+                    if let Some(idx) = self.global_song_list_state.selected() {
+                        match self.playing {
+                            Playing::Playlist(_) => {
+                                self.stop_playing_current();
+                                self.global_songs[idx].playing = true;
+                                self.playing = Playing::GlobalSong(idx);
+                                self.play_path(
+                                    &self.global_songs[idx].name.clone(),
+                                    &self.global_songs[idx].path.clone(),
+                                );
+                                self.last_queue_length = self.sink.len();
+                                self.sink.play();
+                            }
+                            Playing::Song(_) => {
+                                self.stop_playing_current();
+                                self.global_songs[idx].playing = true;
+                                self.playing = Playing::GlobalSong(idx);
+                                self.play_path(
+                                    &self.global_songs[idx].name.clone(),
+                                    &self.global_songs[idx].path.clone(),
+                                );
+                                self.last_queue_length = self.sink.len();
+                                self.sink.play();
+                            }
+                            Playing::GlobalSong(playing_idx) => {
+                                self.stop_playing_current();
+                                if playing_idx != idx {
+                                    self.global_songs[idx].playing = true;
+                                    self.playing = Playing::GlobalSong(idx);
+                                    self.play_path(
+                                        &self.global_songs[idx].name.clone(),
+                                        &self.global_songs[idx].path.clone(),
+                                    );
+                                    self.last_queue_length = self.sink.len();
+                                    self.sink.play();
+                                }
+                            }
+                            Playing::None => {
+                                self.songs[idx].playing = true;
+                                self.playing = Playing::Song(idx);
+                                self.song_queue.clear();
+                                self.play_path(
+                                    &self.songs[idx].name.clone(),
+                                    &self.songs[idx].path.clone(),
+                                );
+                                self.last_queue_length = self.sink.len();
+                                self.sink.play();
+                            }
+                        }
+                    }
                 }
+                Window::DownloadManager => {}
+                Window::None => {}
             }
         }
     }
@@ -708,15 +821,36 @@ impl App<'_> {
                 }
             }
             self.see_songs_in_playlist();
-        } else if let Some(idx) = self.song_list_state.selected() {
-            if idx + 1 == self.songs.len() {
-                self.songs[idx].selected = Selected::None;
-                self.song_list_state.select_first();
-                self.songs[0].selected = Selected::Focused;
-            } else {
-                self.songs[idx].selected = Selected::None;
-                self.song_list_state.select(Some(idx + 1));
-                self.songs[idx + 1].selected = Selected::Focused;
+        } else {
+            match self.window {
+                Window::Songs => {
+                    if let Some(idx) = self.song_list_state.selected() {
+                        if idx + 1 == self.songs.len() {
+                            self.songs[idx].selected = Selected::None;
+                            self.song_list_state.select_first();
+                            self.songs[0].selected = Selected::Focused;
+                        } else {
+                            self.songs[idx].selected = Selected::None;
+                            self.song_list_state.select(Some(idx + 1));
+                            self.songs[idx + 1].selected = Selected::Focused;
+                        }
+                    }
+                }
+                Window::GlobalSongs => {
+                    if let Some(idx) = self.global_song_list_state.selected() {
+                        if idx + 1 == self.global_songs.len() {
+                            self.global_songs[idx].selected = Selected::None;
+                            self.global_song_list_state.select_first();
+                            self.global_songs[0].selected = Selected::Focused;
+                        } else {
+                            self.global_songs[idx].selected = Selected::None;
+                            self.global_song_list_state.select(Some(idx + 1));
+                            self.global_songs[idx + 1].selected = Selected::Focused;
+                        }
+                    }
+                }
+                Window::DownloadManager => self.log = String::from("tUUUTOOO"),
+                Window::None => {}
             }
         }
     }
@@ -736,16 +870,38 @@ impl App<'_> {
                 }
             }
             self.see_songs_in_playlist();
-        } else if let Some(idx) = self.song_list_state.selected() {
-            if idx == 0 {
-                self.songs[idx].selected = Selected::None;
-                let new_index = self.songs.len() - 1;
-                self.song_list_state.select(Some(new_index));
-                self.songs[new_index].selected = Selected::Focused;
-            } else {
-                self.songs[idx].selected = Selected::None;
-                self.song_list_state.select(Some(idx - 1));
-                self.songs[idx - 1].selected = Selected::Focused;
+        } else {
+            match self.window {
+                Window::Songs => {
+                    if let Some(idx) = self.song_list_state.selected() {
+                        if idx == 0 {
+                            self.songs[idx].selected = Selected::None;
+                            let new_index = self.songs.len() - 1;
+                            self.song_list_state.select(Some(new_index));
+                            self.songs[new_index].selected = Selected::Focused;
+                        } else {
+                            self.songs[idx].selected = Selected::None;
+                            self.song_list_state.select(Some(idx - 1));
+                            self.songs[idx - 1].selected = Selected::Focused;
+                        }
+                    }
+                }
+                Window::GlobalSongs => {
+                    if let Some(idx) = self.global_song_list_state.selected() {
+                        if idx == 0 {
+                            self.global_songs[idx].selected = Selected::None;
+                            let new_index = self.songs.len() - 1;
+                            self.global_song_list_state.select(Some(new_index));
+                            self.global_songs[new_index].selected = Selected::Focused;
+                        } else {
+                            self.global_songs[idx].selected = Selected::None;
+                            self.global_song_list_state.select(Some(idx - 1));
+                            self.global_songs[idx - 1].selected = Selected::Focused;
+                        }
+                    }
+                }
+                Window::DownloadManager => self.log = String::from("toooDOOOTOO"),
+                Window::None => {}
             }
         }
     }
@@ -779,7 +935,7 @@ impl App<'_> {
         if self.focused == Focused::Right {
             match self.window {
                 Window::Songs => self.enter_input_mode(InputMode::AddSongToPlaylist),
-                Window::GlobalSongs => self.log = String::from("TODO! GlobalSongs"),
+                Window::GlobalSongs => self.enter_input_mode(InputMode::AddGlobalSong),
                 Window::DownloadManager => self.log = String::from("TODO! DownloadManager"),
                 _ => {}
             }
@@ -789,46 +945,54 @@ impl App<'_> {
     }
 
     fn remove_current(&mut self) {
-        if let Some(idx) = self.playlist_list_state.selected() {
-            self.log = format!("Remove index {idx}");
-            self.playlists.remove(idx);
-            self.save_data.playlists.remove(idx);
+        if self.focused == Focused::Left {
+            if let Some(idx) = self.playlist_list_state.selected() {
+                self.log = format!("Remove index {idx}");
+                self.playlists.remove(idx);
+                self.save_data.playlists.remove(idx);
 
-            if let Playing::Playlist(playing_idx) = self.playing {
-                if playing_idx == idx {
-                    self.playing = Playing::None;
+                if let Playing::Playlist(playing_idx) = self.playing {
+                    if playing_idx == idx {
+                        self.playing = Playing::None;
+                    }
                 }
-            }
 
-            if idx == self.playlists.len() {
-                self.playlist_list_state.select(Some(idx - 1));
-                self.playlists[idx - 1].selected = Selected::Focused;
-            }
-        } else if let Some(idx) = self.song_list_state.selected() {
-            let playlist_idx = self.playlist_list_state.selected().unwrap();
-            self.log = format!("Remove index {idx}");
-
-            self.songs.remove(idx);
-            self.playlists[playlist_idx].songs.remove(idx);
-            self.save_data.playlists[playlist_idx].songs.remove(idx);
-
-            if let Playing::Song(playing_idx) = self.playing {
-                if playing_idx == idx {
-                    self.playing = Playing::None;
+                if idx == self.playlists.len() {
+                    self.playlist_list_state.select(Some(idx - 1));
+                    self.playlists[idx - 1].selected = Selected::Focused;
                 }
-            }
-
-            if idx == self.songs.len() {
-                self.song_list_state.select(Some(idx - 1));
-                self.songs[idx - 1].selected = Selected::Focused;
             }
         } else {
-            self.log = String::from("Can't remove!");
+            match self.window {
+                Window::Songs => {
+                    if let Some(idx) = self.song_list_state.selected() {
+                        let playlist_idx = self.playlist_list_state.selected().unwrap();
+                        self.log = format!("Remove index {idx}");
+
+                        self.songs.remove(idx);
+                        self.playlists[playlist_idx].songs.remove(idx);
+                        self.save_data.playlists[playlist_idx].songs.remove(idx);
+
+                        if let Playing::Song(playing_idx) = self.playing {
+                            if playing_idx == idx {
+                                self.playing = Playing::None;
+                            }
+                        }
+
+                        if idx == self.songs.len() {
+                            self.song_list_state.select(Some(idx - 1));
+                            self.songs[idx - 1].selected = Selected::Focused;
+                        }
+                    }
+                }
+                Window::GlobalSongs => self.log = String::from("// TODO: this"),
+                Window::DownloadManager => self.log = String::from("totototototo"),
+                Window::None => {}
+            }
         }
     }
 
     pub fn init(&mut self) -> io::Result<()> {
-        self.sink.set_volume(0.25);
         let mut first = true;
 
         for playlist in &self.save_data.playlists {
@@ -839,6 +1003,7 @@ impl App<'_> {
                 .filter(|song| playlist.songs.contains(&song.name))
                 .cloned()
                 .collect();
+
             self.playlists.push(Playlist {
                 songs,
                 name: playlist.name.clone(),
@@ -849,11 +1014,32 @@ impl App<'_> {
                 },
                 playing: false,
             });
+
             first = false;
         }
+
+        for song in &self.save_data.songs {
+            self.global_songs.push(Song {
+                selected: Selected::None,
+                name: song.name.clone(),
+                path: song.path.clone(),
+                playing: false,
+            });
+        }
+
+        for song in &self.playlists[0].songs {
+            self.songs.push(Song {
+                selected: Selected::None,
+                name: song.name.clone(),
+                path: song.path.clone(),
+                playing: false,
+            });
+        }
+
         if !Path::new(&self.save_data.config.dlp_path).exists() {
             self.enter_input_mode(InputMode::GetDlp);
         }
+        self.sink.set_volume(0.25);
         Ok(())
     }
 

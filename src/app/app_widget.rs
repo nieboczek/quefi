@@ -123,34 +123,50 @@ impl App<'_> {
                 Window::DownloadManager => "Download manager",
                 Window::None => "",
             })
-            .title_bottom("q - quit   h - help")
+            .title_bottom("q - quit   y - help")
             .border_set(border::THICK);
 
         if self.mode == Mode::Help {
             Paragraph::new(concat!(
                 "",
                 "\n  q - quit the program",
-                "\n  h - display this text",
+                "\n  y - display this text",
+                "\n  r - toggle repeating",
                 "\n  enter - play song/playlist",
                 "\n  space - pause song/playlist",
                 "\n  a - add song/playlist",
                 "\n  n - remove song/playlist",
                 "\n  f - skip song",
-                "\n  y - open global song manager",
+                "\n  g - open global song manager",
                 "\n  d - open download manager",
                 "\n  u/i - decrease/increase volume",
                 "\n  o/p - seek backward/forward 5 seconds",
+                "\n  left/right - select the left/right window",
                 "\n  up/down - select previous/next item",
+                "\n",
+                "\n  can use h/l to replace left/right",
+                "\n  can use k/j to replace up/down",
             ))
             .block(block)
             .render(area, buf);
         } else {
-            StatefulWidget::render(
-                List::new(&self.songs).block(block),
-                area,
-                buf,
-                &mut self.song_list_state,
-            );
+            match self.window {
+                Window::Songs => StatefulWidget::render(
+                    List::new(&self.songs).block(block),
+                    area,
+                    buf,
+                    &mut self.song_list_state,
+                ),
+                // TODO: Global songs manager
+                Window::GlobalSongs => StatefulWidget::render(
+                    List::new(&self.global_songs).block(block),
+                    area,
+                    buf,
+                    &mut self.song_list_state,
+                ),
+                Window::DownloadManager => {}
+                Window::None => block.render(area, buf),
+            }
         }
     }
 
