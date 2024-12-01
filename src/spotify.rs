@@ -42,6 +42,23 @@ pub struct TrackInfo {
     pub duration_ms: u32,
 }
 
+#[derive(PartialEq)]
+pub enum SpotifyLink<'a> {
+    Track(&'a str),
+    Playlist(&'a str),
+    Invalid,
+}
+
+pub fn validate_spotify_link(link: &str) -> SpotifyLink {
+    if let Some(track_id) = link.strip_prefix("https://open.spotify.com/track/") {
+        SpotifyLink::Track(track_id)
+    } else if let Some(playlist_id) = link.strip_prefix("https://open.spotify.com/playlist/") {
+        SpotifyLink::Playlist(playlist_id)
+    } else {
+        SpotifyLink::Invalid
+    }
+}
+
 fn transform_track_metadata(metadata: &ApiTrackMetadata) -> TrackInfo {
     TrackInfo {
         query: format!(

@@ -1,5 +1,8 @@
-use crate::{spotify, youtube, Error, SaveData};
-use macros::*;
+use crate::{
+    spotify::{validate_spotify_link, SpotifyLink},
+    youtube::{self, download_song},
+    Error, SaveData,
+};
 use ratatui::{
     backend::Backend,
     crossterm::event::{self, poll, Event, KeyCode, KeyEventKind},
@@ -8,6 +11,7 @@ use ratatui::{
     widgets::{Block, ListState},
     Terminal,
 };
+use regex::Regex;
 use reqwest::Client;
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
 use serde::{Deserialize, Serialize};
@@ -15,13 +19,14 @@ use std::{fs::File, io, path::Path, time::Duration};
 use tokio::task::JoinHandle;
 use tui_textarea::{CursorMove, Input, Key, TextArea};
 
+#[macro_use]
 mod macros;
+
 mod widget;
 
 fn is_valid_youtube_link(url: &str) -> bool {
-    let re =
-        regex::Regex::new(r"^https?://(www\.)?(youtube\.com/watch\?v=|youtu\.be/)[\w-]{11}(&.*)?$")
-            .unwrap();
+    let re = Regex::new(r"^https?://(www\.)?(youtube\.com/watch\?v=|youtu\.be/)[\w-]{11}(&.*)?$")
+        .unwrap();
     re.is_match(url)
 }
 
@@ -68,6 +73,13 @@ enum Playing {
     GlobalSong(usize),
     Playlist(usize),
     Song(usize),
+    None,
+}
+
+#[derive(PartialEq)]
+enum Repeat {
+    RepeatAll,
+    RepeatOne,
     None,
 }
 
@@ -124,7 +136,7 @@ pub(crate) struct App<'a> {
     focused: Focused,
     client: Client,
     window: Window,
-    repeat: bool,
+    repeat: Repeat,
     log: String,
     sink: Sink,
     mode: Mode,
@@ -145,7 +157,7 @@ impl App<'_> {
             _stream: stream,
             client,
             sink,
-            repeat: false,
+            repeat: Repeat::None,
             window: Window::Songs,
             playlist_list_state: ListState::default().with_selected(Some(0)),
             global_song_list_state: ListState::default().with_selected(Some(0)),
@@ -183,10 +195,10 @@ impl App<'_> {
                             KeyCode::Char('p') => self.seek_forward(),
                             KeyCode::Char('a') => self.add_item(),
                             KeyCode::Char('n') => self.remove_current(),
+                            KeyCode::Char('r') => self.toggle_repeat(),
                             KeyCode::Char('f') => self.sink.skip_one(),
-                            KeyCode::Char('r') => self.repeat = !self.repeat,
                             KeyCode::Char('g') => self.window = Window::GlobalSongs,
-                            KeyCode::Char('d') => self.open_download_manager(),
+                            KeyCode::Char('d') => self.window = Window::DownloadManager,
                             KeyCode::Char('u') => self.decrease_volume(),
                             KeyCode::Char('i') => self.increase_volume(),
                             KeyCode::Char('h') | KeyCode::Left => self.select_left_window(),
@@ -228,6 +240,14 @@ impl App<'_> {
             }
         }
         Ok(())
+    }
+
+    fn toggle_repeat(&mut self) {
+        self.repeat = match self.repeat {
+            Repeat::RepeatAll => Repeat::RepeatOne,
+            Repeat::RepeatOne => Repeat::None,
+            Repeat::None => Repeat::RepeatAll,
+        }
     }
 
     fn select_left_window(&mut self) {
@@ -425,9 +445,10 @@ impl App<'_> {
                 )
             }
             Mode::Input(InputMode::DownloadLink) => self.textarea_condition(
-                is_valid_youtube_link(&self.textarea.lines()[0]),
-                String::from("Input YouTube link"),
-                String::from("Invalid YouTube link"),
+                is_valid_youtube_link(&self.textarea.lines()[0])
+                    || validate_spotify_link(&self.textarea.lines()[0]) != SpotifyLink::Invalid,
+                String::from("Input Spotify/YouTube link"),
+                String::from("Invalid Spotify/YouTube link"),
             ),
             Mode::Input(InputMode::GetDlp) => {
                 let text = &self.textarea.lines()[0].to_ascii_lowercase();
@@ -537,12 +558,24 @@ impl App<'_> {
                 self.exit_input_mode();
             }
             Mode::Input(InputMode::DownloadLink) => {
-                let dlp_path = self.save_data.config.dlp_path.clone();
-                let input = self.textarea.lines()[0].clone();
+                let link = validate_spotify_link(&self.textarea.lines()[0]);
 
-                self.err_join_handle = Some(tokio::spawn(async move {
-                    youtube::download_song(&dlp_path, &input).await
-                }));
+                match link {
+                    SpotifyLink::Playlist(id) => {
+                        self.log = format!("not implemented yet SpotifyLink::Playlist({})", id);
+                    }
+                    SpotifyLink::Track(id) => {
+                        self.log = format!("not implemented yet SpotifyLink::Track({})", id);
+                    }
+                    SpotifyLink::Invalid => {
+                        let dlp_path = self.save_data.config.dlp_path.clone();
+                        let input = self.textarea.lines()[0].clone();
+
+                        self.err_join_handle = Some(tokio::spawn(async move {
+                            download_song(&dlp_path, &input).await
+                        }));
+                    }
+                }
                 self.exit_input_mode();
             }
             Mode::Input(InputMode::GetDlp) => {
@@ -559,15 +592,6 @@ impl App<'_> {
                 self.exit_input_mode();
             }
             _ => unreachable!(),
-        }
-    }
-
-    /// TODO: Actually open download manager
-    fn open_download_manager(&mut self) {
-        if !Path::new(&self.save_data.config.dlp_path).exists() {
-            self.enter_input_mode(InputMode::GetDlp);
-        } else {
-            self.enter_input_mode(InputMode::DownloadLink);
         }
     }
 
@@ -753,45 +777,15 @@ impl App<'_> {
 
     fn select_next(&mut self) {
         if self.focused == Focused::Left {
-            if let Some(idx) = self.playlist_list_state.selected() {
-                if idx + 1 == self.playlists.len() {
-                    self.playlists[idx].selected = Selected::None;
-                    self.playlist_list_state.select_first();
-                    self.playlists[0].selected = Selected::Focused;
-                } else {
-                    self.playlists[idx].selected = Selected::None;
-                    self.playlist_list_state.select(Some(idx + 1));
-                    self.playlists[idx + 1].selected = Selected::Focused;
-                }
-            }
+            select_next!(self.playlists, self.playlist_list_state);
             self.see_songs_in_playlist();
         } else {
             match self.window {
                 Window::Songs => {
-                    if let Some(idx) = self.song_list_state.selected() {
-                        if idx + 1 == self.songs.len() {
-                            self.songs[idx].selected = Selected::None;
-                            self.song_list_state.select_first();
-                            self.songs[0].selected = Selected::Focused;
-                        } else {
-                            self.songs[idx].selected = Selected::None;
-                            self.song_list_state.select(Some(idx + 1));
-                            self.songs[idx + 1].selected = Selected::Focused;
-                        }
-                    }
+                    select_next!(self.songs, self.song_list_state);
                 }
                 Window::GlobalSongs => {
-                    if let Some(idx) = self.global_song_list_state.selected() {
-                        if idx + 1 == self.global_songs.len() {
-                            self.global_songs[idx].selected = Selected::None;
-                            self.global_song_list_state.select_first();
-                            self.global_songs[0].selected = Selected::Focused;
-                        } else {
-                            self.global_songs[idx].selected = Selected::None;
-                            self.global_song_list_state.select(Some(idx + 1));
-                            self.global_songs[idx + 1].selected = Selected::Focused;
-                        }
-                    }
+                    select_next!(self.global_songs, self.global_song_list_state);
                 }
                 Window::DownloadManager => self.log = String::from("tUUUTOOO"),
             }
@@ -800,48 +794,15 @@ impl App<'_> {
 
     fn select_previous(&mut self) {
         if self.focused == Focused::Left {
-            if let Some(idx) = self.playlist_list_state.selected() {
-                if idx == 0 {
-                    self.playlists[idx].selected = Selected::None;
-                    let new_index = self.playlists.len() - 1;
-                    self.playlist_list_state.select(Some(new_index));
-                    self.playlists[new_index].selected = Selected::Focused;
-                } else {
-                    self.playlists[idx].selected = Selected::None;
-                    self.playlist_list_state.select(Some(idx - 1));
-                    self.playlists[idx - 1].selected = Selected::Focused;
-                }
-            }
+            select_previous!(self.playlists, self.playlist_list_state);
             self.see_songs_in_playlist();
         } else {
             match self.window {
                 Window::Songs => {
-                    if let Some(idx) = self.song_list_state.selected() {
-                        if idx == 0 {
-                            self.songs[idx].selected = Selected::None;
-                            let new_index = self.songs.len() - 1;
-                            self.song_list_state.select(Some(new_index));
-                            self.songs[new_index].selected = Selected::Focused;
-                        } else {
-                            self.songs[idx].selected = Selected::None;
-                            self.song_list_state.select(Some(idx - 1));
-                            self.songs[idx - 1].selected = Selected::Focused;
-                        }
-                    }
+                    select_previous!(self.songs, self.song_list_state);
                 }
                 Window::GlobalSongs => {
-                    if let Some(idx) = self.global_song_list_state.selected() {
-                        if idx == 0 {
-                            self.global_songs[idx].selected = Selected::None;
-                            let new_index = self.songs.len() - 1;
-                            self.global_song_list_state.select(Some(new_index));
-                            self.global_songs[new_index].selected = Selected::Focused;
-                        } else {
-                            self.global_songs[idx].selected = Selected::None;
-                            self.global_song_list_state.select(Some(idx - 1));
-                            self.global_songs[idx - 1].selected = Selected::Focused;
-                        }
-                    }
+                    select_previous!(self.global_songs, self.global_song_list_state);
                 }
                 Window::DownloadManager => self.log = String::from("toooDOOOTOO"),
             }
@@ -878,8 +839,7 @@ impl App<'_> {
             match self.window {
                 Window::Songs => self.enter_input_mode(InputMode::AddSongToPlaylist),
                 Window::GlobalSongs => self.enter_input_mode(InputMode::AddGlobalSong),
-                Window::DownloadManager => self.log = String::from("TODO! DownloadManager"),
-                _ => {}
+                Window::DownloadManager => self.enter_input_mode(InputMode::DownloadLink),
             }
         } else {
             self.enter_input_mode(InputMode::AddPlaylist);

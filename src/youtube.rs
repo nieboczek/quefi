@@ -1,5 +1,5 @@
 use crate::{get_quefi_dir, Error, DLP_EXECUTABLE_NAME};
-use regex::Match;
+use regex::{Match, Regex};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -188,7 +188,7 @@ pub async fn get_visitor_id(client: &Client) -> Result<String, Error> {
         .await?;
 
     let text = response.text().await?;
-    let matches = regex::Regex::new(r"ytcfg\.set\s*\(\s*(\{.+?\})\s*\)\s*;")
+    let matches = Regex::new(r"ytcfg\.set\s*\(\s*(\{.+?\})\s*\)\s*;")
         .unwrap()
         .find_iter(&text)
         .collect::<Vec<Match>>();
@@ -281,7 +281,7 @@ fn parse_search_result(value: &Value) -> SearchResult {
 
         let text = run["text"].as_str().unwrap();
         if run.get("navigationEndpoint").is_none()
-            && regex::Regex::new(r"^(\d+:)*\d+:\d+$")
+            && Regex::new(r"^(\d+:)*\d+:\d+$")
                 .unwrap()
                 .is_match(text)
         {
