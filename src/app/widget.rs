@@ -121,7 +121,6 @@ impl App<'_> {
                 Window::Songs => "Songs",
                 Window::GlobalSongs => "Global song manager",
                 Window::DownloadManager => "Download manager",
-                Window::None => "",
             })
             .title_bottom("q - quit   y - help")
             .border_set(border::THICK);
@@ -165,7 +164,6 @@ impl App<'_> {
                     &mut self.song_list_state,
                 ),
                 Window::DownloadManager => {}
-                Window::None => block.render(area, buf),
             }
         }
     }

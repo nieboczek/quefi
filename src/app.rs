@@ -1,4 +1,5 @@
-use crate::{get_quefi_dir, spotify, youtube, Config, Error};
+use crate::{spotify, youtube, Error, SaveData};
+use macros::*;
 use ratatui::{
     backend::Backend,
     crossterm::event::{self, poll, Event, KeyCode, KeyEventKind},
@@ -10,51 +11,12 @@ use ratatui::{
 use reqwest::Client;
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
 use serde::{Deserialize, Serialize};
-use std::{
-    fs::{create_dir_all, read_to_string, write, File},
-    io::{self, ErrorKind},
-    path::Path,
-    time::Duration,
-};
+use std::{fs::File, io, path::Path, time::Duration};
 use tokio::task::JoinHandle;
 use tui_textarea::{CursorMove, Input, Key, TextArea};
 
-mod app_widget;
-
-fn save_data(data: &SaveData) {
-    let contents = serde_json::to_string(&data).unwrap();
-    let dir = get_quefi_dir();
-    write(dir.join("data.json"), contents).unwrap();
-}
-
-fn load_data() -> SaveData {
-    let dir = get_quefi_dir();
-    if let Err(err) = create_dir_all(dir.join("songs")) {
-        if err.kind() != ErrorKind::AlreadyExists {
-            panic!("Could not create quefi/songs/ in the directory of the quefi executable file: {err}");
-        }
-    }
-    let contents = match read_to_string(dir.join("data.json")) {
-        Ok(contents) => contents,
-        Err(err) => {
-            if err.kind() != ErrorKind::NotFound {
-                panic!("Could not read quefi/data.json: {err}");
-            }
-            let data = SaveData {
-                config: Config {
-                    dlp_path: String::new(),
-                    spotify_client_id: String::new(),
-                    spotify_client_secret: String::new(),
-                },
-                playlists: Vec::new(),
-                songs: Vec::new(),
-            };
-            save_data(&data);
-            return data;
-        }
-    };
-    serde_json::from_str::<SaveData>(&contents).expect("Failed to load save data")
-}
+mod macros;
+mod widget;
 
 fn is_valid_youtube_link(url: &str) -> bool {
     let re =
@@ -89,7 +51,6 @@ enum Focused {
 /// ## Possibly just use GlobalSongs instead of None in `App::default`
 #[derive(PartialEq)]
 enum Window {
-    None,
     Songs,
     GlobalSongs,
     DownloadManager,
@@ -111,16 +72,15 @@ enum Playing {
 }
 
 #[derive(Serialize, Deserialize)]
-struct SaveData {
-    config: Config,
-    playlists: Vec<SerializablePlaylist>,
-    songs: Vec<SerializableSong>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct SerializablePlaylist {
+pub(crate) struct SerializablePlaylist {
     songs: Vec<String>,
     name: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub(crate) struct SerializableSong {
+    name: String,
+    path: String,
 }
 
 #[derive(Clone)]
@@ -129,12 +89,6 @@ struct Playlist {
     selected: Selected,
     playing: bool,
     name: String,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-struct SerializableSong {
-    name: String,
-    path: String,
 }
 
 #[derive(Debug, Clone)]
@@ -151,10 +105,11 @@ struct QueuedSong {
     duration: Duration,
 }
 
-pub struct App<'a> {
+pub(crate) struct App<'a> {
     err_join_handle: Option<JoinHandle<Result<(), Error>>>,
     global_song_list_state: ListState,
     playlist_list_state: ListState,
+    pub(crate) save_data: SaveData,
     _handle: OutputStreamHandle,
     song_queue: Vec<QueuedSong>,
     song_list_state: ListState,
@@ -163,8 +118,6 @@ pub struct App<'a> {
     global_songs: Vec<Song>,
     textarea: TextArea<'a>,
     _stream: OutputStream,
-    save_data: SaveData,
-    should_exit: bool,
     valid_input: bool,
     songs: Vec<Song>,
     playing: Playing,
@@ -178,7 +131,7 @@ pub struct App<'a> {
 }
 
 impl App<'_> {
-    pub fn default() -> Self {
+    pub(crate) fn new(data: SaveData) -> Self {
         let client = Client::builder()
             .timeout(Duration::from_secs(15))
             .build()
@@ -201,8 +154,7 @@ impl App<'_> {
             err_join_handle: None,
             last_queue_length: 0,
             song_queue: Vec::new(),
-            save_data: load_data(),
-            should_exit: false,
+            save_data: data,
             global_songs: Vec::new(),
             playlists: Vec::new(),
             songs: Vec::new(),
@@ -214,8 +166,8 @@ impl App<'_> {
         }
     }
 
-    pub async fn run(&mut self, mut terminal: Terminal<impl Backend>) -> io::Result<()> {
-        while !self.should_exit {
+    pub(crate) async fn run(&mut self, mut terminal: Terminal<impl Backend>) -> io::Result<()> {
+        loop {
             terminal.draw(|frame| {
                 frame.render_widget(&mut *self, frame.area());
             })?;
@@ -224,7 +176,7 @@ impl App<'_> {
                 if let Event::Key(key) = event::read()? {
                     match self.mode {
                         Mode::Normal if key.kind == KeyEventKind::Press => match key.code {
-                            KeyCode::Char('q') => self.save_and_exit(),
+                            KeyCode::Char('q') => break,
                             KeyCode::Char('y') => self.help(),
                             KeyCode::Char(' ') => self.pause(),
                             KeyCode::Char('o') => self.seek_back(),
@@ -258,7 +210,7 @@ impl App<'_> {
                         },
                         Mode::Help if key.kind == KeyEventKind::Press => match key.code {
                             KeyCode::Char('y') => self.help(),
-                            KeyCode::Char('q') => self.save_and_exit(),
+                            KeyCode::Char('q') => break,
                             _ => {}
                         },
                         _ => {}
@@ -293,7 +245,6 @@ impl App<'_> {
                 }
             }
             Window::DownloadManager => self.log = String::from("tooddddd"),
-            Window::None => {}
         }
 
         if let Some(idx) = self.playlist_list_state.selected() {
@@ -316,7 +267,6 @@ impl App<'_> {
                 }
             }
             Window::DownloadManager => self.log = String::from("tood"),
-            Window::None => {}
         }
 
         if let Some(idx) = self.playlist_list_state.selected() {
@@ -391,11 +341,6 @@ impl App<'_> {
         } else {
             self.sink.set_volume(new_volume);
         }
-    }
-
-    fn save_and_exit(&mut self) {
-        save_data(&self.save_data);
-        self.should_exit = true;
     }
 
     fn validate_input(&mut self) {
@@ -802,7 +747,6 @@ impl App<'_> {
                     }
                 }
                 Window::DownloadManager => {}
-                Window::None => {}
             }
         }
     }
@@ -850,7 +794,6 @@ impl App<'_> {
                     }
                 }
                 Window::DownloadManager => self.log = String::from("tUUUTOOO"),
-                Window::None => {}
             }
         }
     }
@@ -901,7 +844,6 @@ impl App<'_> {
                     }
                 }
                 Window::DownloadManager => self.log = String::from("toooDOOOTOO"),
-                Window::None => {}
             }
         }
     }
@@ -985,14 +927,29 @@ impl App<'_> {
                         }
                     }
                 }
-                Window::GlobalSongs => self.log = String::from("// TODO: this"),
+                Window::GlobalSongs => {
+                    if let Some(idx) = self.global_song_list_state.selected() {
+                        self.global_songs.remove(idx);
+                        self.save_data.songs.remove(idx);
+
+                        if let Playing::GlobalSong(playing_idx) = self.playing {
+                            if playing_idx == idx {
+                                self.playing = Playing::None;
+                            }
+                        }
+
+                        if idx == self.global_songs.len() {
+                            self.global_song_list_state.select(Some(idx - 1));
+                            self.global_songs[idx - 1].selected = Selected::Focused;
+                        }
+                    }
+                }
                 Window::DownloadManager => self.log = String::from("totototototo"),
-                Window::None => {}
             }
         }
     }
 
-    pub fn init(&mut self) -> io::Result<()> {
+    pub(crate) fn init(&mut self) -> io::Result<()> {
         let mut first = true;
 
         for playlist in &self.save_data.playlists {
