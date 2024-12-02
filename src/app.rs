@@ -78,8 +78,8 @@ enum Playing {
 
 #[derive(PartialEq)]
 enum Repeat {
-    RepeatAll,
-    RepeatOne,
+    All,
+    One,
     None,
 }
 
@@ -229,9 +229,25 @@ impl App<'_> {
                     }
                 }
             }
-            if self.sink.len() != self.last_queue_length && !self.song_queue.is_empty() {
-                self.last_queue_length = self.sink.len();
-                self.song_queue.remove(0);
+            if self.sink.len() != self.last_queue_length {
+                // if self.repeat == Repeat::One {
+                //     // TODO: this 
+                // }
+                
+                if !self.song_queue.is_empty() {
+                    self.last_queue_length = self.sink.len();
+                    self.song_queue.remove(0);
+                }
+
+                if self.song_queue.is_empty() && self.repeat == Repeat::All {
+                    if let Playing::Playlist(idx) = self.playing {
+                        for song in &self.playlists[idx].songs.clone() {
+                            self.play_path(&song.name, &song.path);
+                        }
+
+                        self.last_queue_length = self.sink.len();
+                    }
+                }
             }
             if self.err_join_handle.is_some() {
                 if let Err(err) = self.err_join_handle.as_mut().unwrap().await.unwrap() {
@@ -244,9 +260,9 @@ impl App<'_> {
 
     fn toggle_repeat(&mut self) {
         self.repeat = match self.repeat {
-            Repeat::RepeatAll => Repeat::RepeatOne,
-            Repeat::RepeatOne => Repeat::None,
-            Repeat::None => Repeat::RepeatAll,
+            Repeat::All => Repeat::One,
+            Repeat::One => Repeat::None,
+            Repeat::None => Repeat::All,
         }
     }
 
@@ -297,7 +313,7 @@ impl App<'_> {
     fn seek_back(&mut self) {
         if !self.song_queue.is_empty() {
             self.sink
-                .try_seek(self.sink.get_pos() - Duration::from_secs(5))
+                .try_seek(self.sink.get_pos().saturating_sub(Duration::from_secs(5)))
                 .expect("Seeking failed");
         }
     }
@@ -813,6 +829,7 @@ impl App<'_> {
         // TODO: Actually handle errors
         let file = File::open(path).expect("Failed to open file");
         let source = Decoder::new(file).expect("Failed to decode file");
+
         if let Some(duration) = source.total_duration() {
             let queued_song = self.song_queue.last();
             if let Some(last_song) = queued_song {
@@ -862,6 +879,7 @@ impl App<'_> {
                 if idx == self.playlists.len() {
                     self.playlist_list_state.select(Some(idx - 1));
                     self.playlists[idx - 1].selected = Selected::Focused;
+                    self.see_songs_in_playlist();
                 }
             }
         } else {
@@ -956,6 +974,7 @@ impl App<'_> {
         if !Path::new(&self.save_data.config.dlp_path).exists() {
             self.enter_input_mode(InputMode::GetDlp);
         }
+        
         self.sink.set_volume(0.25);
         Ok(())
     }

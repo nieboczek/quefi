@@ -7,7 +7,7 @@ use ratatui::{
     widgets::{Block, List, ListItem, Paragraph, StatefulWidget, Widget},
 };
 
-use super::Window;
+use super::{Repeat, Window};
 
 impl Widget for &mut App<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
@@ -22,7 +22,7 @@ impl Widget for &mut App<'_> {
             .areas(area);
 
             let [playlist_area, main_area] =
-                Layout::horizontal([Constraint::Min(24), Constraint::Percentage(100)])
+                Layout::horizontal([Constraint::Percentage(20), Constraint::Fill(1)])
                     .areas(main_area);
 
             App::render_header(header_area, buf);
@@ -41,7 +41,7 @@ impl Widget for &mut App<'_> {
             .areas(area);
 
             let [playlist_area, main_area] =
-                Layout::horizontal([Constraint::Min(24), Constraint::Percentage(100)])
+                Layout::horizontal([Constraint::Percentage(20), Constraint::Fill(1)])
                     .areas(main_area);
 
             App::render_header(header_area, buf);
@@ -70,6 +70,11 @@ impl App<'_> {
     fn render_player(&mut self, area: Rect, buf: &mut Buffer) {
         let block = Block::bordered().title("Player").border_set(border::THICK);
 
+        let repeat_symbol = match self.repeat {
+            Repeat::All => "🔁",
+            Repeat::One => "🔂",
+            Repeat::None => "  ", 
+        };
         let pause_symbol = if self.sink.is_paused() { "||" } else { ">>" };
 
         let remaining_time = if !self.song_queue.is_empty() {
@@ -101,9 +106,9 @@ impl App<'_> {
         }
 
         Paragraph::new(format!(
-            "{num} {title}{}🔈{:.0}% {}\n{pause_symbol} {}",
-            // Spaces until sound controls won't fit
-            " ".repeat((area.as_size().width - 22 - title.len() as u16) as usize),
+            "{num} {title}{}{repeat_symbol} 🔈{:.0}% {}\n{pause_symbol} {}",
+            // Spaces until other information won't fit
+            " ".repeat((area.as_size().width - 25 - title.len() as u16) as usize), //prev: - 24 -
             // Volume percentage
             self.sink.volume() * 100.,
             // Volume
