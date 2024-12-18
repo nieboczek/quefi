@@ -7,7 +7,7 @@ use ratatui::{
     widgets::{Block, List, ListItem, Paragraph, StatefulWidget, Widget},
 };
 
-use super::{Repeat, Window};
+use super::{Download, Repeat, Window};
 
 impl Widget for &mut App<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
@@ -73,7 +73,7 @@ impl App<'_> {
         let repeat_symbol = match self.repeat {
             Repeat::All => "🔁",
             Repeat::One => "🔂",
-            Repeat::None => "  ", 
+            Repeat::None => "  ",
         };
         let pause_symbol = if self.sink.is_paused() { "||" } else { ">>" };
 
@@ -168,7 +168,12 @@ impl App<'_> {
                     buf,
                     &mut self.song_list_state,
                 ),
-                Window::DownloadManager => {}
+                Window::DownloadManager => StatefulWidget::render(
+                    List::new(&self.downloads).block(block),
+                    area,
+                    buf,
+                    &mut self.download_state,
+                ),
             }
         }
     }
@@ -216,5 +221,11 @@ impl From<&Song> for ListItem<'_> {
         }
 
         ListItem::from(format!("{}{}", prefix, value.name))
+    }
+}
+
+impl From<&Download> for ListItem<'_> {
+    fn from(_value: &Download) -> Self {
+        ListItem::from("")
     }
 }

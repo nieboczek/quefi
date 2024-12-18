@@ -1,7 +1,10 @@
 use crate::{
-    spotify::{validate_spotify_link, SpotifyLink},
-    youtube::{self, download_song},
-    Error, SaveData,
+    get_quefi_dir, make_safe_filename,
+    spotify::{
+        create_token, fetch_playlist_info, fetch_track_info, validate_spotify_link, SpotifyLink,
+    },
+    youtube::{self, download_song, search_ytmusic},
+    Error, SaveData, SearchFor, TaskResult, TaskReturn,
 };
 use ratatui::{
     backend::Backend,
@@ -30,14 +33,14 @@ fn is_valid_youtube_link(url: &str) -> bool {
     re.is_match(url)
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 enum Mode {
     Input(InputMode),
     Normal,
     Help,
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 enum InputMode {
     DownloadLink,
     AddPlaylist,
@@ -47,14 +50,13 @@ enum InputMode {
     GetDlp,
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 enum Focused {
     Right,
     Left,
 }
 
-/// ## Possibly just use GlobalSongs instead of None in `App::default`
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 enum Window {
     Songs,
     GlobalSongs,
@@ -68,7 +70,7 @@ enum Selected {
     Unfocused,
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 enum Playing {
     GlobalSong(usize),
     Playlist(usize),
@@ -76,26 +78,26 @@ enum Playing {
     None,
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 enum Repeat {
+    None,
     All,
     One,
-    None,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct SerializablePlaylist {
     songs: Vec<String>,
     name: String,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct SerializableSong {
     name: String,
     path: String,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct Playlist {
     songs: Vec<SerializableSong>,
     selected: Selected,
@@ -111,21 +113,27 @@ struct Song {
     playing: bool,
 }
 
+#[derive(Debug)]
 struct QueuedSong {
     name: String,
     song_idx: u16,
     duration: Duration,
 }
 
+#[derive(Debug)]
+enum Download {}
+
 pub(crate) struct App<'a> {
-    err_join_handle: Option<JoinHandle<Result<(), Error>>>,
+    join_handles: Vec<JoinHandle<Result<TaskReturn, Error>>>,
     global_song_list_state: ListState,
     playlist_list_state: ListState,
     pub(crate) save_data: SaveData,
     _handle: OutputStreamHandle,
     song_queue: Vec<QueuedSong>,
     song_list_state: ListState,
+    download_state: ListState,
     playlists: Vec<Playlist>,
+    downloads: Vec<Download>,
     last_queue_length: usize,
     global_songs: Vec<Song>,
     textarea: TextArea<'a>,
@@ -145,7 +153,7 @@ pub(crate) struct App<'a> {
 impl App<'_> {
     pub(crate) fn new(data: SaveData) -> Self {
         let client = Client::builder()
-            .timeout(Duration::from_secs(15))
+            .timeout(Duration::from_secs(10))
             .build()
             .unwrap();
 
@@ -159,15 +167,17 @@ impl App<'_> {
             sink,
             repeat: Repeat::None,
             window: Window::Songs,
+            download_state: ListState::default().with_selected(Some(0)),
             playlist_list_state: ListState::default().with_selected(Some(0)),
             global_song_list_state: ListState::default().with_selected(Some(0)),
-            song_list_state: ListState::default(),
+            song_list_state: ListState::default().with_selected(Some(0)),
             focused: Focused::Left,
-            err_join_handle: None,
             last_queue_length: 0,
-            song_queue: Vec::new(),
             save_data: data,
+            join_handles: Vec::new(),
+            song_queue: Vec::new(),
             global_songs: Vec::new(),
+            downloads: Vec::new(),
             playlists: Vec::new(),
             songs: Vec::new(),
             playing: Playing::None,
@@ -183,6 +193,7 @@ impl App<'_> {
             terminal.draw(|frame| {
                 frame.render_widget(&mut *self, frame.area());
             })?;
+
             // Force updates every 0.1 seconds
             if poll(Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
@@ -229,33 +240,165 @@ impl App<'_> {
                     }
                 }
             }
-            if self.sink.len() != self.last_queue_length {
-                // if self.repeat == Repeat::One {
-                //     // TODO: this 
-                // }
-                
-                if !self.song_queue.is_empty() {
-                    self.last_queue_length = self.sink.len();
-                    self.song_queue.remove(0);
-                }
+            self.update_song_queue();
 
-                if self.song_queue.is_empty() && self.repeat == Repeat::All {
-                    if let Playing::Playlist(idx) = self.playing {
-                        for song in &self.playlists[idx].songs.clone() {
-                            self.play_path(&song.name, &song.path);
-                        }
+            let mut completed_futures = Vec::new();
 
-                        self.last_queue_length = self.sink.len();
-                    }
+            for handle in self.join_handles.iter_mut() {
+                if handle.is_finished() {
+                    completed_futures.push(handle.await.unwrap());
                 }
             }
-            if self.err_join_handle.is_some() {
-                if let Err(err) = self.err_join_handle.as_mut().unwrap().await.unwrap() {
-                    self.log = format!("{}", err);
-                }
+
+            self.join_handles.retain(|handle| !handle.is_finished());
+
+            for completed_future in completed_futures {
+                self.handle_result(completed_future);
             }
         }
         Ok(())
+    }
+
+    fn handle_result(&mut self, result: TaskResult) {
+        match result {
+            Ok(TaskReturn::PlaylistInfo(playlist_info)) => {
+                self.log = String::from("Playlist fetched successfully! Starting search...");
+
+                self.save_data.playlists.push(SerializablePlaylist {
+                    songs: Vec::new(),
+                    name: playlist_info.name.clone(),
+                });
+
+                self.playlists.push(Playlist {
+                    songs: Vec::new(),
+                    selected: Selected::None,
+                    playing: false,
+                    name: playlist_info.name.clone(),
+                });
+
+                let idx = self.save_data.playlists.len() - 1;
+
+                for track in playlist_info.tracks {
+                    let client = self.client.clone();
+
+                    self.join_handles.push(tokio::spawn(async move {
+                        search_ytmusic(&client, &track.query, SearchFor::Playlist(idx, track.name))
+                            .await
+                    }));
+                }
+            }
+            Ok(TaskReturn::TrackInfo(track_info)) => {
+                self.log = String::from("Track fetched successfully! Starting search...");
+                let client = self.client.clone();
+
+                self.join_handles.push(tokio::spawn(async move {
+                    search_ytmusic(
+                        &client,
+                        &track_info.query,
+                        SearchFor::GlobalSong(track_info.name),
+                    )
+                    .await
+                }));
+            }
+            Ok(TaskReturn::SearchResult(search_result, search_for)) => {
+                self.log = String::from("Search successful!");
+                let dlp_path = self.save_data.dlp_path.clone();
+
+                let filename = make_safe_filename(search_for.name());
+
+                self.join_handles.push(tokio::spawn(async move {
+                    download_song(
+                        &dlp_path,
+                        &format!("https://youtube.com/watch?v={}", search_result.video_id),
+                        &filename,
+                        search_for,
+                    )
+                    .await
+                }));
+            }
+            Ok(TaskReturn::SongDownloaded(SearchFor::Playlist(idx, song_name))) => {
+                self.log = format!("Song for playlist downloaded: {}", song_name);
+
+                self.save_data.playlists[idx].songs.push(song_name.clone());
+
+                self.playlists[idx].songs.push(SerializableSong {
+                    path: get_quefi_dir()
+                        .join("songs")
+                        .join(format!("{}.mp3", make_safe_filename(&song_name)))
+                        .to_string_lossy()
+                        .to_string(),
+                    name: song_name,
+                });
+            }
+            Ok(TaskReturn::SongDownloaded(SearchFor::GlobalSong(name))) => {
+                self.log = format!("Song downloaded: {}", name);
+
+                self.save_data.songs.push(SerializableSong {
+                    path: get_quefi_dir()
+                        .join(make_safe_filename(&name))
+                        .to_string_lossy()
+                        .to_string(),
+                    name: name.clone(),
+                });
+
+                self.global_songs.push(Song {
+                    path: get_quefi_dir()
+                        .join(make_safe_filename(&name))
+                        .to_string_lossy()
+                        .to_string(),
+                    name,
+                    playing: false,
+                    selected: Selected::None,
+                });
+            }
+            Ok(TaskReturn::DlpDownloaded) => {}
+            Ok(TaskReturn::Token(token, link)) => {
+                self.save_data.last_valid_token = token;
+                self.action_on_link(link);
+            }
+            Err(err) => {
+                if let Error::SpotifyBadAuth(link) = err {
+                    self.recreate_spotify_token(link);
+                } else {
+                    self.log = err.to_string();
+                }
+            }
+        }
+    }
+
+    fn recreate_spotify_token(&mut self, link: SpotifyLink) {
+        self.log = String::from("Spotify token expired. Creating a new one...");
+
+        let client_id = self.save_data.spotify_client_id.clone();
+        let client_secret = self.save_data.spotify_client_secret.clone();
+        let client = self.client.clone();
+
+        self.join_handles.push(tokio::spawn(async move {
+            create_token(&client, &client_id, &client_secret, link).await
+        }));
+    }
+
+    fn update_song_queue(&mut self) {
+        if self.sink.len() != self.last_queue_length {
+            // if self.repeat == Repeat::One {
+            //     // TODO: this
+            // }
+
+            if !self.song_queue.is_empty() {
+                self.last_queue_length = self.sink.len();
+                self.song_queue.remove(0);
+            }
+
+            if self.song_queue.is_empty() && self.repeat == Repeat::All {
+                if let Playing::Playlist(idx) = self.playing {
+                    for song in &self.playlists[idx].songs.clone() {
+                        self.play_path(&song.name, &song.path);
+                    }
+
+                    self.last_queue_length = self.sink.len();
+                }
+            }
+        }
     }
 
     fn toggle_repeat(&mut self) {
@@ -562,6 +705,7 @@ impl App<'_> {
                 let input = self.textarea.lines()[0].clone();
                 self.textarea.move_cursor(CursorMove::Head);
                 self.textarea.delete_line_by_end();
+
                 self.mode = Mode::Input(InputMode::ChooseFile(input));
                 self.validate_input();
             }
@@ -575,23 +719,8 @@ impl App<'_> {
             }
             Mode::Input(InputMode::DownloadLink) => {
                 let link = validate_spotify_link(&self.textarea.lines()[0]);
+                self.action_on_link(link);
 
-                match link {
-                    SpotifyLink::Playlist(id) => {
-                        self.log = format!("not implemented yet SpotifyLink::Playlist({})", id);
-                    }
-                    SpotifyLink::Track(id) => {
-                        self.log = format!("not implemented yet SpotifyLink::Track({})", id);
-                    }
-                    SpotifyLink::Invalid => {
-                        let dlp_path = self.save_data.config.dlp_path.clone();
-                        let input = self.textarea.lines()[0].clone();
-
-                        self.err_join_handle = Some(tokio::spawn(async move {
-                            download_song(&dlp_path, &input).await
-                        }));
-                    }
-                }
                 self.exit_input_mode();
             }
             Mode::Input(InputMode::GetDlp) => {
@@ -601,13 +730,57 @@ impl App<'_> {
                 }
 
                 let client = self.client.clone();
-                self.err_join_handle =
-                    Some(tokio::spawn(
-                        async move { youtube::download_dlp(&client).await },
-                    ));
+                self.join_handles.push(tokio::spawn(async move {
+                    youtube::download_dlp(&client).await
+                }));
                 self.exit_input_mode();
             }
             _ => unreachable!(),
+        }
+    }
+
+    fn action_on_link(&mut self, link: SpotifyLink) {
+        match link.clone() {
+            SpotifyLink::Playlist(id) => {
+                if self.save_data.last_valid_token.is_empty() {
+                    self.recreate_spotify_token(link);
+                    return;
+                }
+
+                let last_valid_token = self.save_data.last_valid_token.clone();
+                let client = self.client.clone();
+
+                self.join_handles.push(tokio::spawn(async move {
+                    fetch_playlist_info(&client, &id, &last_valid_token).await
+                }));
+            }
+            SpotifyLink::Track(id) => {
+                if self.save_data.last_valid_token.is_empty() {
+                    self.recreate_spotify_token(link);
+                    return;
+                }
+
+                let last_valid_token = self.save_data.last_valid_token.clone();
+                let client = self.client.clone();
+
+                self.join_handles.push(tokio::spawn(async move {
+                    fetch_track_info(&client, &id, &last_valid_token).await
+                }));
+            }
+            SpotifyLink::Invalid => {
+                let dlp_path = self.save_data.dlp_path.clone();
+                let input = self.textarea.lines()[0].clone();
+
+                self.join_handles.push(tokio::spawn(async move {
+                    download_song(
+                        &dlp_path,
+                        &input,
+                        &make_safe_filename(&input),
+                        SearchFor::GlobalSong(String::from("Song from YT Link")),
+                    )
+                    .await
+                }));
+            }
         }
     }
 
@@ -773,12 +946,12 @@ impl App<'_> {
                                 }
                             }
                             Playing::None => {
-                                self.songs[idx].playing = true;
+                                self.global_songs[idx].playing = true;
                                 self.playing = Playing::Song(idx);
                                 self.song_queue.clear();
                                 self.play_path(
-                                    &self.songs[idx].name.clone(),
-                                    &self.songs[idx].path.clone(),
+                                    &self.global_songs[idx].name.clone(),
+                                    &self.global_songs[idx].path.clone(),
                                 );
                                 self.last_queue_length = self.sink.len();
                                 self.sink.play();
@@ -971,10 +1144,10 @@ impl App<'_> {
             });
         }
 
-        if !Path::new(&self.save_data.config.dlp_path).exists() {
+        if !Path::new(&self.save_data.dlp_path).exists() {
             self.enter_input_mode(InputMode::GetDlp);
         }
-        
+
         self.sink.set_volume(0.25);
         Ok(())
     }

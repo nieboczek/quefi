@@ -1,133 +1,162 @@
-use base64::{prelude::BASE64_STANDARD, Engine};
 use reqwest::Client;
 use serde::Deserialize;
 
-use crate::Error;
+use crate::{Error, TaskResult, TaskReturn};
 
-#[derive(Deserialize, Debug)]
+#[derive(Debug, Deserialize)]
 struct ApiPlaylistMetadata {
+    name: String,
     tracks: ApiTracks,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Debug, Deserialize)]
 struct ApiTracks {
     items: Vec<ApiTrackItem>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Debug, Deserialize)]
 struct ApiTrackItem {
     track: ApiTrackMetadata,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Debug, Deserialize, Clone)]
 struct ApiTrackMetadata {
     name: String,
     artists: Vec<ApiArtist>,
     duration_ms: u32,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Debug, Deserialize, Clone)]
 struct ApiArtist {
     name: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct ApiTokenResponse {
     access_token: String,
 }
 
 #[derive(Debug)]
 pub struct TrackInfo {
+    // TODO: Use the duration to make searches more accurate
+    _duration_ms: u32,
     pub query: String,
-    pub duration_ms: u32,
+    pub name: String,
 }
 
-#[derive(PartialEq)]
-pub enum SpotifyLink<'a> {
-    Track(&'a str),
-    Playlist(&'a str),
+#[derive(Debug)]
+pub struct PlaylistInfo {
+    pub tracks: Vec<TrackInfo>,
+    pub name: String,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum SpotifyLink {
+    Track(String),
+    Playlist(String),
     Invalid,
 }
 
 pub fn validate_spotify_link(link: &str) -> SpotifyLink {
     if let Some(track_id) = link.strip_prefix("https://open.spotify.com/track/") {
-        SpotifyLink::Track(track_id)
+        if let Some((id, _)) = track_id.split_once('?') {
+            SpotifyLink::Track(id.to_string())
+        } else {
+            SpotifyLink::Track(track_id.to_string())
+        }
     } else if let Some(playlist_id) = link.strip_prefix("https://open.spotify.com/playlist/") {
-        SpotifyLink::Playlist(playlist_id)
+        if let Some((id, _)) = playlist_id.split_once('?') {
+            SpotifyLink::Playlist(id.to_string())
+        } else {
+            SpotifyLink::Playlist(playlist_id.to_string())
+        }
     } else {
         SpotifyLink::Invalid
     }
 }
 
-fn transform_track_metadata(metadata: &ApiTrackMetadata) -> TrackInfo {
+fn transform_track_metadata(metadata: ApiTrackMetadata) -> TrackInfo {
     TrackInfo {
         query: format!(
             "{} - {}",
             metadata
                 .artists
-                .iter()
-                .map(|artist| artist.name.clone())
+                .into_iter()
+                .map(|artist| artist.name)
                 .collect::<Vec<String>>()
                 .join(", "),
-            metadata.name
+            &metadata.name
         ),
-        duration_ms: metadata.duration_ms,
+        name: metadata.name,
+        _duration_ms: metadata.duration_ms,
     }
 }
 
-pub async fn fetch_track_info(track_id: &str, access_token: &str) -> Result<TrackInfo, Error> {
-    let client = Client::new();
+pub async fn fetch_track_info(client: &Client, track_id: &str, token: &str) -> TaskResult {
     let url = format!("https://api.spotify.com/v1/tracks/{}", track_id);
 
-    let res = client
-        .get(&url)
-        .header("Authorization", format!("Bearer {}", access_token))
-        .send()
-        .await?;
+    let result = client.get(&url).bearer_auth(token).send().await;
 
-    let metadata: ApiTrackMetadata = res.json().await?;
-    Ok(transform_track_metadata(&metadata))
+    match result {
+        Ok(res) => {
+            let metadata: ApiTrackMetadata = res.json().await?;
+            Ok(TaskReturn::TrackInfo(transform_track_metadata(metadata)))
+        }
+        Err(err) => {
+            if err.status().unwrap().as_u16() == 401 {
+                Err(Error::SpotifyBadAuth(SpotifyLink::Track(
+                    track_id.to_string(),
+                )))
+            } else {
+                Err(Error::Http(err))
+            }
+        }
+    }
 }
 
-pub async fn fetch_playlist_tracks(
-    playlist_id: &str,
-    access_token: &str,
-) -> Result<Vec<TrackInfo>, Error> {
-    let client = Client::new();
-    let url = format!("https://api.spotify.com/v1/playlists/{}", playlist_id);
+pub async fn fetch_playlist_info(client: &Client, playlist_id: &str, token: &str) -> TaskResult {
+    let url = format!("https://api.spotify.com/v1/playlists/{}?fields=name,tracks.items(track(name,artists(name),duration_ms))", playlist_id);
 
-    let res = client
-        .get(&url)
-        .header("Authorization", format!("Bearer {}", access_token))
-        .send()
-        .await?;
+    let result = client.get(&url).bearer_auth(token).send().await;
 
-    let metadata: ApiPlaylistMetadata = res.json().await?;
-    Ok(metadata
-        .tracks
-        .items
-        .iter()
-        .map(|track| transform_track_metadata(&track.track))
-        .collect::<Vec<TrackInfo>>())
+    match result {
+        Ok(res) => {
+            if res.status().as_u16() == 401 {
+                return Err(Error::SpotifyBadAuth(SpotifyLink::Playlist(
+                    playlist_id.to_string(),
+                )));
+            }
+
+            let metadata: ApiPlaylistMetadata = res.json().await?;
+            Ok(TaskReturn::PlaylistInfo(PlaylistInfo {
+                tracks: metadata
+                    .tracks
+                    .items
+                    .into_iter()
+                    .map(|track| transform_track_metadata(track.track))
+                    .collect::<Vec<TrackInfo>>(),
+                name: metadata.name,
+            }))
+        }
+        Err(err) => Err(Error::Http(err)),
+    }
 }
 
 pub async fn create_token(
     client: &Client,
     client_id: &str,
     client_secret: &str,
-) -> Result<String, Error> {
-    let auth = format!("{}:{}", client_id, client_secret);
-    let auth_encoded = BASE64_STANDARD.encode(auth);
-
+    link: SpotifyLink,
+) -> TaskResult {
     let res = client
         .post("https://accounts.spotify.com/api/token")
-        .header("Authorization", format!("Basic {}", auth_encoded))
+        .basic_auth(client_id, Some(client_secret))
         .form(&[("grant_type", "client_credentials")])
         .send()
         .await?;
 
     let token: ApiTokenResponse = res.json().await?;
-    Ok(token.access_token)
+    Ok(TaskReturn::Token(token.access_token, link))
 }
 
-// TODO: Make a function to access all track of playlist (the fetch_playlist_tracks only lists the first 100)
+// TODO: Make a function to access all track of playlist (fetch_playlist_info only lists the first 100)

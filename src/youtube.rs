@@ -1,5 +1,5 @@
-use crate::{get_quefi_dir, Error, DLP_EXECUTABLE_NAME};
-use regex::{Match, Regex};
+use crate::{get_quefi_dir, Error, SearchFor, TaskResult, TaskReturn};
+use regex::Regex;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -13,6 +13,12 @@ use tokio::{fs::File, io::copy, process::Command};
 
 #[cfg(not(target_os = "windows"))]
 use tokio::fs::OpenOptions;
+
+#[cfg(target_os = "windows")]
+pub const DLP_EXECUTABLE_NAME: &str = "yt-dlp.exe";
+
+#[cfg(not(target_os = "windows"))]
+pub const DLP_EXECUTABLE_NAME: &str = "yt-dlp";
 
 #[cfg(target_os = "windows")]
 async fn create_file() -> io::Result<File> {
@@ -45,7 +51,6 @@ struct Asset {
 struct Body<'a> {
     query: &'a str,
     params: &'a str,
-    client_id: Option<String>,
     context: Value,
 }
 
@@ -55,17 +60,14 @@ pub struct SearchResult {
     pub duration_ms: u32,
 }
 
-pub async fn download_dlp(client: &Client) -> Result<(), Error> {
+pub async fn download_dlp(client: &Client) -> TaskResult {
     let response = client
         .get("https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest")
         .header("User-Agent", "nieboczek/quefi")
         .send()
         .await?;
 
-    let release: Release = match response.json().await {
-        Ok(release) => release,
-        Err(err) => return Err(Error::Http(err)),
-    };
+    let release: Release = response.json().await?;
 
     let url = release
         .assets
@@ -78,10 +80,15 @@ pub async fn download_dlp(client: &Client) -> Result<(), Error> {
     let mut file = create_file().await?;
 
     copy(&mut response.bytes().await?.as_ref(), &mut file).await?;
-    Ok(())
+    Ok(TaskReturn::DlpDownloaded)
 }
 
-pub async fn download_song(dlp_path: &str, yt_link: &str) -> Result<(), Error> {
+pub async fn download_song(
+    dlp_path: &str,
+    yt_link: &str,
+    filename: &str,
+    search_for: SearchFor,
+) -> TaskResult {
     let dir = get_quefi_dir();
 
     #[cfg(not(target_os = "windows"))]
@@ -96,7 +103,7 @@ pub async fn download_song(dlp_path: &str, yt_link: &str) -> Result<(), Error> {
             "mp3",
             yt_link,
             "-o",
-            "temp.mp3",
+            &format!("{}.mp3", filename),
         ])
         .spawn()?;
 
@@ -113,12 +120,12 @@ pub async fn download_song(dlp_path: &str, yt_link: &str) -> Result<(), Error> {
             "mp3",
             yt_link,
             "-o",
-            "temp.mp3",
+            &format!("{}.mp3", filename),
         ])
         .spawn()?;
 
     child.wait().await?;
-    Ok(())
+    Ok(TaskReturn::SongDownloaded(search_for))
 }
 
 fn get_timestamp() -> String {
@@ -172,48 +179,7 @@ fn month_length(year: u64, month: u64) -> u64 {
     }
 }
 
-pub async fn get_visitor_id(client: &Client) -> Result<String, Error> {
-    let response = client
-        .get("https://music.youtube.com")
-        .header(
-            "User-Agent",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:88.0) Gecko/20100101 Firefox/88.0",
-        )
-        .header("Accept", "*/*")
-        .header("Content-Type", "application/json")
-        .header("Accept-Encoding", "gzip, deflate")
-        .header("Content-Encoding", "gzip")
-        .header("Origin", "https://music.youtube.com")
-        .send()
-        .await?;
-
-    let text = response.text().await?;
-    let matches = Regex::new(r"ytcfg\.set\s*\(\s*(\{.+?\})\s*\)\s*;")
-        .unwrap()
-        .find_iter(&text)
-        .collect::<Vec<Match>>();
-
-    if !matches.is_empty() {
-        let json = matches[0]
-            .as_str()
-            .strip_prefix("ytcfg.set(")
-            .unwrap()
-            .strip_suffix(");")
-            .unwrap();
-
-        let ytcfg: Value = serde_json::from_str(json).unwrap();
-        let visitor_data = ytcfg.get("VISITOR_DATA").unwrap().clone();
-        Ok(visitor_data.as_str().unwrap().to_string())
-    } else {
-        Err(Error::YtMusicError)
-    }
-}
-
-async fn send_request<'a>(
-    client: &Client,
-    visitor_id: &str,
-    body: Body<'a>,
-) -> Result<Value, Error> {
+async fn send_request<'a>(client: &Client, body: Body<'a>) -> Result<Value, Error> {
     let response = client
         .post("https://music.youtube.com/youtubei/v1/search?alt=json")
         .json(&body)
@@ -225,7 +191,6 @@ async fn send_request<'a>(
         .header("Content-Type", "application/json")
         .header("Content-Encoding", "gzip")
         .header("Origin", "https://music.youtube.com")
-        .header("X-Goog-Visitor-Id", visitor_id)
         .send()
         .await?;
 
@@ -281,9 +246,7 @@ fn parse_search_result(value: &Value) -> SearchResult {
 
         let text = run["text"].as_str().unwrap();
         if run.get("navigationEndpoint").is_none()
-            && Regex::new(r"^(\d+:)*\d+:\d+$")
-                .unwrap()
-                .is_match(text)
+            && Regex::new(r"^(\d+:)*\d+:\d+$").unwrap().is_match(text)
         {
             result.duration_ms = parse_duration(text);
         }
@@ -314,10 +277,10 @@ fn parse_duration(duration: &str) -> u32 {
     milliseconds
 }
 
-pub async fn search(client: &Client, visitor_id: &str, query: &str) -> Result<SearchResult, Error> {
+pub async fn search_ytmusic(client: &Client, query: &str, search_for: SearchFor) -> TaskResult {
     let body = Body {
         query,
-        client_id: None,
+        // Filter only for songs, ignore spelling mistakes
         params: "EgWKAQIIAUICCAFqDBAOEAoQAxAEEAkQBQ%3D%3D",
         context: json!({
             "client": {
@@ -328,7 +291,7 @@ pub async fn search(client: &Client, visitor_id: &str, query: &str) -> Result<Se
         }),
     };
 
-    let json = send_request(client, visitor_id, body).await?;
+    let json = send_request(client, body).await?;
 
     if let Some(contents) = json.get("contents") {
         let results = if let Some(renderer) = contents.get("tabbedSearchResultsRenderer") {
@@ -341,7 +304,7 @@ pub async fn search(client: &Client, visitor_id: &str, query: &str) -> Result<Se
         let has_renderer = section_list.get("itemSectionRenderer").is_some();
 
         if section_list.as_array().unwrap().len() == 1 && has_renderer {
-            return Err(Error::YtMusicError);
+            return Err(Error::YtMusic);
         }
 
         let mut shelf_contents: &Vec<Value> = &Vec::new();
@@ -354,9 +317,10 @@ pub async fn search(client: &Client, visitor_id: &str, query: &str) -> Result<Se
                 shelf_contents = renderer["contents"].as_array().unwrap();
             }
         }
-        return Ok(parse_search_result(
-            &shelf_contents[0]["musicResponsiveListItemRenderer"],
+        return Ok(TaskReturn::SearchResult(
+            parse_search_result(&shelf_contents[0]["musicResponsiveListItemRenderer"]),
+            search_for,
         ));
     }
-    Err(Error::YtMusicError)
+    Err(Error::YtMusic)
 }

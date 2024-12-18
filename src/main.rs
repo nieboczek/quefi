@@ -7,45 +7,56 @@ use ratatui::{
     },
     Terminal,
 };
+use regex::Regex;
 use serde::{Deserialize, Serialize};
+use spotify::{PlaylistInfo, SpotifyLink, TrackInfo};
 use std::{
     fmt::{self, Display, Formatter},
     fs::{create_dir_all, read_to_string, write},
     io::{self, stdout, ErrorKind},
     path::PathBuf,
 };
+use youtube::SearchResult;
 
 mod app;
 mod spotify;
 mod youtube;
 
-#[cfg(target_os = "windows")]
-pub const DLP_EXECUTABLE_NAME: &str = "yt-dlp.exe";
-#[cfg(not(target_os = "windows"))]
-pub const DLP_EXECUTABLE_NAME: &str = "yt-dlp";
-
 #[derive(Serialize, Deserialize)]
 pub(crate) struct SaveData {
-    config: Config,
+    dlp_path: String,
     playlists: Vec<SerializablePlaylist>,
     songs: Vec<SerializableSong>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-struct Config {
-    dlp_path: String,
     spotify_client_id: String,
     spotify_client_secret: String,
+    last_valid_token: String,
+}
+
+type TaskResult = Result<TaskReturn, Error>;
+
+#[derive(Debug)]
+pub(crate) enum TaskReturn {
+    SearchResult(SearchResult, SearchFor),
+    Token(String, SpotifyLink),
+    PlaylistInfo(PlaylistInfo),
+    SongDownloaded(SearchFor),
+    TrackInfo(TrackInfo),
+    DlpDownloaded,
 }
 
 #[derive(Debug)]
-pub enum Error {
-    Io(std::io::Error),
+pub(crate) enum SearchFor {
+    /// `usize` is playlist index, it may be inaccurate when a playlist is added, fix would be needed! TODO
+    Playlist(usize, String),
+    GlobalSong(String),
+}
+
+#[derive(Debug)]
+pub(crate) enum Error {
+    SpotifyBadAuth(SpotifyLink),
     Http(reqwest::Error),
-    Timeout,
-    InvalidJson,
-    ReleaseNotFound,
-    YtMusicError,
+    Io(std::io::Error),
+    YtMusic,
 }
 
 impl From<std::io::Error> for Error {
@@ -65,15 +76,24 @@ impl Display for Error {
         match self {
             Self::Http(err) => write!(f, "HTTP Error: {err}"),
             Self::Io(err) => write!(f, "IO Error: {err}"),
-            Self::Timeout => write!(f, "Process timed out"),
-            Self::InvalidJson => write!(f, "Tried to parse invalid JSON"),
-            Self::ReleaseNotFound => write!(f, "Correct release of yt-dlp not found"),
-            Self::YtMusicError => write!(f, "Failed to search YT Music"),
+            Self::YtMusic => write!(f, "Failed to search YT Music"),
+            &Self::SpotifyBadAuth(_) => {
+                panic!("Wanted to display Error::SpotifyBadAuth")
+            }
         }
     }
 }
 
-pub fn get_quefi_dir() -> PathBuf {
+impl SearchFor {
+    fn name(&self) -> &String {
+        match self {
+            SearchFor::GlobalSong(name) => name,
+            SearchFor::Playlist(_, name) => name,
+        }
+    }
+}
+
+pub(crate) fn get_quefi_dir() -> PathBuf {
     let exe = match std::env::current_exe() {
         Ok(exe) => exe,
         Err(err) => panic!("Failed to get executable file. {err}"),
@@ -101,19 +121,37 @@ fn load_data() -> SaveData {
                 panic!("Could not read quefi/data.json: {err}");
             }
             let data = SaveData {
-                config: Config {
-                    dlp_path: String::new(),
-                    spotify_client_id: String::new(),
-                    spotify_client_secret: String::new(),
-                },
+                dlp_path: String::new(),
+                spotify_client_id: String::new(),
+                spotify_client_secret: String::new(),
                 playlists: Vec::new(),
                 songs: Vec::new(),
+                last_valid_token: String::new(),
             };
             save_data(&data);
             return data;
         }
     };
     serde_json::from_str::<SaveData>(&contents).expect("Failed to load save data")
+}
+
+pub(crate) fn make_safe_filename(input: &str) -> String {
+    let input = Regex::new("[<>:\"/\\\\|?*\u{0000}-\u{001F}\u{007F}\u{0080}-\u{009F}]+")
+        .unwrap()
+        .replace_all(input.as_ref(), "_");
+    let input = Regex::new("^\\.+|\\.+$")
+        .unwrap()
+        .replace_all(input.as_ref(), "_");
+
+    let mut result = input.into_owned();
+    if Regex::new("^(con|prn|aux|nul|com\\d|lpt\\d)$")
+        .unwrap()
+        .is_match(result.as_str())
+    {
+        result.push('_');
+    }
+
+    result
 }
 
 fn init_terminal() -> io::Result<Terminal<impl Backend>> {
