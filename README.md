@@ -1,17 +1,28 @@
 # Quefi
-Quefi is a TUI/CLI music player.
-TODO
+<!-- Badges here -->
+Quefi is a free, open-source TUI music player that can not only play your local files, but also download tracks and entire playlists from Spotify.
+It's perfect for listening to music while working on your computer or just chilling on the couch.
+<!-- Screenshots here -->
+
 ## Installation
-Grab the pre-built executable file for your system [here](https://github.com/nieboczek/quefi/releases/latest) or compile it yourself by using `cargo build`.
-## Usage
-Run the executable file you downloaded in your terminal.
-Figure out the rest! :)
-## Screenshots
-#missing
-# TODO!!!
-- order items in playlist created from a spotify one
-- download manager items
-- finish Repeat::One
-- when playing song in playlist, make it continue to the next thing in playlist
-- make mouse do stuff ;-;
-- discord integration (https://crates.io/crates/discord-rich-presence & https://discord.com/developers/applications/1298340402499289220/information)
+Grab a pre-built executable file for your system [here](https://github.com/nieboczek/quefi/releases/latest) or compile it yourself by using `cargo build`.
+
+Optionally download [yt-dlp](https://github.com/yt-dlp/yt-dlp/releases/) to use Spotify playlist/track downloader.
+
+## Configuration
+To configure Quefi, you can open the configuration menu using `c` and browse various options there.
+
+## TODO
+Top - most priority; bottom - least priority
+
+- [ ]  Order items correctly when downloading playlist from Spotify
+- [ ]  Make the configuration menu
+- [ ]  Make download manager have items that keep track of what's going on
+- [ ]  Show which song is played in playlist
+- [ ]  Make repeat one mode work
+- [ ]  Discord Rich Presence
+- [ ]  Make mouse interact with elements
+
+## Contributing
+Contributions, bug reports, new features and questions are always welcome!
+If you have any questions or you want to suggest a new feature, or you want just want to improve Quefi, feel free to open an issue or a PR.
