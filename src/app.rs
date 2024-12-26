@@ -270,7 +270,13 @@ impl App<'_> {
                 });
 
                 self.playlists.push(Playlist {
-                    songs: vec![SerializableSong { name: String::new(), path: String::new() }; playlist_info.tracks.len()],
+                    songs: vec![
+                        SerializableSong {
+                            name: String::new(),
+                            path: String::new()
+                        };
+                        playlist_info.tracks.len()
+                    ],
                     selected: Selected::None,
                     playing: false,
                     name: playlist_info.name.clone(),
@@ -282,8 +288,12 @@ impl App<'_> {
                     let client = self.client.clone();
 
                     self.join_handles.push(tokio::spawn(async move {
-                        search_ytmusic(&client, &track.query, SearchFor::Playlist(playlist_idx, track.name, idx))
-                            .await
+                        search_ytmusic(
+                            &client,
+                            &track.query,
+                            SearchFor::Playlist(playlist_idx, track.name, idx),
+                        )
+                        .await
                     }));
                 }
             }
