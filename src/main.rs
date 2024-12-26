@@ -44,10 +44,14 @@ pub(crate) enum TaskReturn {
     DlpDownloaded,
 }
 
+type PlaylistIdx = usize;
+type SongName = String;
+type SongIdx = usize;
+
 #[derive(Debug)]
 pub(crate) enum SearchFor {
     /// `usize` is playlist index, it may be inaccurate when a playlist is added, fix would be needed! TODO
-    Playlist(usize, String),
+    Playlist(PlaylistIdx, SongName, SongIdx),
     GlobalSong(String),
 }
 
@@ -85,10 +89,10 @@ impl Display for Error {
 }
 
 impl SearchFor {
-    fn name(&self) -> &String {
+    fn song_name(&self) -> &String {
         match self {
             SearchFor::GlobalSong(name) => name,
-            SearchFor::Playlist(_, name) => name,
+            SearchFor::Playlist(_, name, _) => name,
         }
     }
 }

@@ -270,19 +270,19 @@ impl App<'_> {
                 });
 
                 self.playlists.push(Playlist {
-                    songs: Vec::new(),
+                    songs: vec![SerializableSong { name: String::new(), path: String::new() }; playlist_info.tracks.len()],
                     selected: Selected::None,
                     playing: false,
                     name: playlist_info.name.clone(),
                 });
 
-                let idx = self.save_data.playlists.len() - 1;
+                let playlist_idx = self.save_data.playlists.len() - 1;
 
-                for track in playlist_info.tracks {
+                for (idx, track) in playlist_info.tracks.into_iter().enumerate() {
                     let client = self.client.clone();
 
                     self.join_handles.push(tokio::spawn(async move {
-                        search_ytmusic(&client, &track.query, SearchFor::Playlist(idx, track.name))
+                        search_ytmusic(&client, &track.query, SearchFor::Playlist(playlist_idx, track.name, idx))
                             .await
                     }));
                 }
@@ -304,7 +304,7 @@ impl App<'_> {
                 self.log = String::from("Search successful!");
                 let dlp_path = self.save_data.dlp_path.clone();
 
-                let filename = make_safe_filename(search_for.name());
+                let filename = make_safe_filename(search_for.song_name());
 
                 self.join_handles.push(tokio::spawn(async move {
                     download_song(
@@ -316,19 +316,19 @@ impl App<'_> {
                     .await
                 }));
             }
-            Ok(TaskReturn::SongDownloaded(SearchFor::Playlist(idx, song_name))) => {
+            Ok(TaskReturn::SongDownloaded(SearchFor::Playlist(idx, song_name, song_idx))) => {
                 self.log = format!("Song for playlist downloaded: {}", song_name);
 
                 self.save_data.playlists[idx].songs.push(song_name.clone());
 
-                self.playlists[idx].songs.push(SerializableSong {
+                self.playlists[idx].songs[song_idx] = SerializableSong {
                     path: get_quefi_dir()
                         .join("songs")
                         .join(format!("{}.mp3", make_safe_filename(&song_name)))
                         .to_string_lossy()
                         .to_string(),
                     name: song_name,
-                });
+                };
             }
             Ok(TaskReturn::SongDownloaded(SearchFor::GlobalSong(name))) => {
                 self.log = format!("Song downloaded: {}", name);
