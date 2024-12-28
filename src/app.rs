@@ -372,33 +372,42 @@ impl App<'_> {
             Ok(TaskReturn::SongDownloaded(SearchFor::Playlist(idx, song_name, song_idx))) => {
                 self.log = format!("Song for playlist downloaded: {}", song_name);
 
-                self.save_data.playlists[idx].songs.push(song_name.clone());
-
-                self.playlists[idx].songs[song_idx] = SerializableSong {
+                let song = SerializableSong {
                     path: get_quefi_dir()
                         .join("songs")
                         .join(format!("{}.mp3", make_safe_filename(&song_name)))
                         .to_string_lossy()
                         .to_string(),
-                    name: song_name,
+                    name: song_name.clone(),
                 };
+
+                self.global_songs.push(Song {
+                    path: song.path.clone(),
+                    name: song_name.clone(),
+                    playing: false,
+                    selected: Selected::None,
+                });
+
+                self.save_data.playlists[idx].songs.push(song_name.clone());
+                self.save_data.songs.push(song.clone());
+
+                self.playlists[idx].songs[song_idx] = song;
             }
             Ok(TaskReturn::SongDownloaded(SearchFor::GlobalSong(name))) => {
                 self.log = format!("Song downloaded: {}", name);
 
+                let path = get_quefi_dir()
+                    .join(make_safe_filename(&name))
+                    .to_string_lossy()
+                    .to_string();
+
                 self.save_data.songs.push(SerializableSong {
-                    path: get_quefi_dir()
-                        .join(make_safe_filename(&name))
-                        .to_string_lossy()
-                        .to_string(),
+                    path: path.clone(),
                     name: name.clone(),
                 });
 
                 self.global_songs.push(Song {
-                    path: get_quefi_dir()
-                        .join(make_safe_filename(&name))
-                        .to_string_lossy()
-                        .to_string(),
+                    path,
                     name,
                     playing: false,
                     selected: Selected::None,
