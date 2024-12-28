@@ -7,7 +7,7 @@ use ratatui::{
     widgets::{Block, List, ListItem, Paragraph, StatefulWidget, Widget},
 };
 
-use super::{Download, Repeat, Window};
+use super::{ConfigField, ConfigFieldType, Download, Repeat, Window};
 
 impl Widget for &mut App<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
@@ -126,6 +126,7 @@ impl App<'_> {
                 Window::Songs => "Songs",
                 Window::GlobalSongs => "Global song manager",
                 Window::DownloadManager => "Download manager",
+                Window::ConfigurationMenu => "Configuration menu",
             })
             .title_bottom("q - quit   y - help")
             .border_set(border::THICK);
@@ -161,7 +162,6 @@ impl App<'_> {
                     buf,
                     &mut self.song_list_state,
                 ),
-                // TODO: Global songs manager
                 Window::GlobalSongs => StatefulWidget::render(
                     List::new(&self.global_songs).block(block),
                     area,
@@ -173,6 +173,17 @@ impl App<'_> {
                     area,
                     buf,
                     &mut self.download_state,
+                ),
+                Window::ConfigurationMenu => StatefulWidget::render(
+                    List::new([
+                        &self.config.dlp_path,
+                        &self.config.spotify_client_id,
+                        &self.config.spotify_client_secret,
+                    ])
+                    .block(block),
+                    area,
+                    buf,
+                    &mut self.config_menu_state,
                 ),
             }
         }
@@ -227,5 +238,29 @@ impl From<&Song> for ListItem<'_> {
 impl From<&Download> for ListItem<'_> {
     fn from(_value: &Download) -> Self {
         ListItem::from("")
+    }
+}
+
+impl From<&ConfigField> for ListItem<'_> {
+    fn from(field: &ConfigField) -> Self {
+        let prefix = match field.selected {
+            Selected::None => String::from("   "),
+            Selected::Focused => String::from("►  "),
+            Selected::Unfocused => String::from("⇨  "),
+        };
+
+        let name = match field.field_type {
+            ConfigFieldType::DlpPath => "DLP path: ",
+            ConfigFieldType::SpotifyClientId => "Spotify client ID: ",
+            ConfigFieldType::SpotifyClientSecret => "Spotify client secret: ",
+        };
+
+        let value = match field.field_type {
+            ConfigFieldType::DlpPath => &field.value,
+            ConfigFieldType::SpotifyClientId => &field.value,
+            ConfigFieldType::SpotifyClientSecret => "********************************",
+        };
+
+        ListItem::from(format!("{}{}{}", prefix, name, value))
     }
 }

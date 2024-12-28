@@ -48,6 +48,9 @@ enum InputMode {
     ChooseFile(String),
     AddGlobalSong,
     GetDlp,
+    DlpPath,
+    SpotifyClientId,
+    SpotifyClientSecret,
 }
 
 #[derive(Debug, PartialEq)]
@@ -60,6 +63,7 @@ enum Focused {
 enum Window {
     Songs,
     GlobalSongs,
+    ConfigurationMenu,
     DownloadManager,
 }
 
@@ -120,6 +124,24 @@ struct QueuedSong {
     duration: Duration,
 }
 
+enum ConfigFieldType {
+    SpotifyClientSecret,
+    SpotifyClientId,
+    DlpPath,
+}
+
+struct ConfigField {
+    field_type: ConfigFieldType,
+    selected: Selected,
+    value: String,
+}
+
+struct Config {
+    spotify_client_secret: ConfigField,
+    spotify_client_id: ConfigField,
+    dlp_path: ConfigField,
+}
+
 #[derive(Debug)]
 enum Download {}
 
@@ -128,6 +150,7 @@ pub(crate) struct App<'a> {
     global_song_list_state: ListState,
     playlist_list_state: ListState,
     pub(crate) save_data: SaveData,
+    config_menu_state: ListState,
     _handle: OutputStreamHandle,
     song_queue: Vec<QueuedSong>,
     song_list_state: ListState,
@@ -142,6 +165,7 @@ pub(crate) struct App<'a> {
     songs: Vec<Song>,
     playing: Playing,
     focused: Focused,
+    config: Config,
     client: Client,
     window: Window,
     repeat: Repeat,
@@ -165,12 +189,30 @@ impl App<'_> {
             _stream: stream,
             client,
             sink,
+            config: Config {
+                dlp_path: ConfigField {
+                    field_type: ConfigFieldType::DlpPath,
+                    value: data.dlp_path.clone(),
+                    selected: Selected::Unfocused,
+                },
+                spotify_client_id: ConfigField {
+                    field_type: ConfigFieldType::SpotifyClientId,
+                    value: data.spotify_client_id.clone(),
+                    selected: Selected::None,
+                },
+                spotify_client_secret: ConfigField {
+                    field_type: ConfigFieldType::SpotifyClientSecret,
+                    value: data.spotify_client_secret.clone(),
+                    selected: Selected::None,
+                },
+            },
             repeat: Repeat::None,
             window: Window::Songs,
             download_state: ListState::default().with_selected(Some(0)),
             playlist_list_state: ListState::default().with_selected(Some(0)),
             global_song_list_state: ListState::default().with_selected(Some(0)),
             song_list_state: ListState::default().with_selected(Some(0)),
+            config_menu_state: ListState::default().with_selected(Some(0)),
             focused: Focused::Left,
             last_queue_length: 0,
             save_data: data,
@@ -210,6 +252,7 @@ impl App<'_> {
                             KeyCode::Char('f') => self.sink.skip_one(),
                             KeyCode::Char('g') => self.window = Window::GlobalSongs,
                             KeyCode::Char('d') => self.window = Window::DownloadManager,
+                            KeyCode::Char('c') => self.window = Window::ConfigurationMenu,
                             KeyCode::Char('u') => self.decrease_volume(),
                             KeyCode::Char('i') => self.increase_volume(),
                             KeyCode::Char('h') | KeyCode::Left => self.select_left_window(),
@@ -433,7 +476,19 @@ impl App<'_> {
                     self.global_songs[idx].selected = Selected::Unfocused;
                 }
             }
-            Window::DownloadManager => self.log = String::from("tooddddd"),
+            Window::DownloadManager => {
+                self.log = String::from("DownloadManager TODO! select_left_window")
+            }
+            Window::ConfigurationMenu => {
+                if let Some(idx) = self.config_menu_state.selected() {
+                    match idx {
+                        0 => self.config.dlp_path.selected = Selected::Unfocused,
+                        1 => self.config.spotify_client_id.selected = Selected::Unfocused,
+                        2 => self.config.spotify_client_secret.selected = Selected::Unfocused,
+                        _ => panic!("Index out of range for config menu"),
+                    }
+                }
+            }
         }
 
         if let Some(idx) = self.playlist_list_state.selected() {
@@ -455,7 +510,19 @@ impl App<'_> {
                     self.global_songs[idx].selected = Selected::Focused;
                 }
             }
-            Window::DownloadManager => self.log = String::from("tood"),
+            Window::DownloadManager => {
+                self.log = String::from("DownloadManager TODO! select_right_window")
+            }
+            Window::ConfigurationMenu => {
+                if let Some(idx) = self.config_menu_state.selected() {
+                    match idx {
+                        0 => self.config.dlp_path.selected = Selected::Focused,
+                        1 => self.config.spotify_client_id.selected = Selected::Focused,
+                        2 => self.config.spotify_client_secret.selected = Selected::Focused,
+                        _ => panic!("Index out of range for config menu"),
+                    }
+                }
+            }
         }
 
         if let Some(idx) = self.playlist_list_state.selected() {
@@ -627,7 +694,34 @@ impl App<'_> {
                     String::from("Y/N only"),
                 )
             }
-            _ => unreachable!(),
+            Mode::Input(InputMode::DlpPath) => {
+                let path = Path::new(&self.textarea.lines()[0]);
+
+                #[cfg(target_os = "windows")]
+                let extension = "exe";
+
+                #[cfg(not(target_os = "windows"))]
+                let extension = "";
+
+                self.textarea_condition(
+                    path.exists()
+                        && path.is_file()
+                        && path.extension().unwrap_or_default() == extension,
+                    String::from("Input yt-dlp path"),
+                    String::from("File path is not pointing to a yt-dlp executable"),
+                )
+            }
+            Mode::Input(InputMode::SpotifyClientId) => self.textarea_condition(
+                self.textarea.lines()[0].len() == 32,
+                String::from("Input Spotify Client ID"),
+                String::from("Invalid Spotify Client ID"),
+            ),
+            Mode::Input(InputMode::SpotifyClientSecret) => self.textarea_condition(
+                self.textarea.lines()[0].len() == 32,
+                String::from("Input Spotify Client Secret"),
+                String::from("Invalid Spotify Client Secret"),
+            ),
+            _ => panic!("No input handler implemented for {:?}", self.mode),
         }
     }
 
@@ -743,6 +837,25 @@ impl App<'_> {
                 self.join_handles.push(tokio::spawn(async move {
                     youtube::download_dlp(&client).await
                 }));
+                self.exit_input_mode();
+            }
+            Mode::Input(InputMode::DlpPath) => {
+                let input = self.textarea.lines()[0].clone();
+                self.config.dlp_path.value = input.clone();
+                self.save_data.dlp_path = input;
+                self.exit_input_mode();
+            }
+            Mode::Input(InputMode::SpotifyClientId) => {
+                let input = self.textarea.lines()[0].clone();
+                self.config.spotify_client_id.value = input.clone();
+                self.save_data.spotify_client_id = input;
+                self.exit_input_mode();
+            }
+            Mode::Input(InputMode::SpotifyClientSecret) => {
+                let input = self.textarea.lines()[0].clone();
+                self.config.spotify_client_secret.value = input.clone();
+                self.save_data.spotify_client_secret = input;
+                self.textarea.clear_mask_char();
                 self.exit_input_mode();
             }
             _ => unreachable!(),
@@ -970,6 +1083,20 @@ impl App<'_> {
                     }
                 }
                 Window::DownloadManager => {}
+                Window::ConfigurationMenu => {
+                    if let Some(idx) = self.config_menu_state.selected() {
+                        match idx {
+                            0 => self.enter_input_mode(InputMode::DlpPath),
+                            1 => self.enter_input_mode(InputMode::SpotifyClientId),
+                            2 => {
+                                self.textarea.set_mask_char('*');
+
+                                self.enter_input_mode(InputMode::SpotifyClientSecret)
+                            }
+                            _ => panic!("Index out of range for config menu"),
+                        }
+                    }
+                }
             }
         }
     }
@@ -986,7 +1113,31 @@ impl App<'_> {
                 Window::GlobalSongs => {
                     select_next!(self.global_songs, self.global_song_list_state);
                 }
-                Window::DownloadManager => self.log = String::from("tUUUTOOO"),
+                Window::DownloadManager => {
+                    self.log = String::from("DownloadManager TODO! select_next")
+                }
+                Window::ConfigurationMenu => {
+                    if let Some(idx) = self.config_menu_state.selected() {
+                        match idx {
+                            0 => {
+                                self.config.dlp_path.selected = Selected::None;
+                                self.config.spotify_client_id.selected = Selected::Focused;
+                                self.config_menu_state.select_next();
+                            }
+                            1 => {
+                                self.config.spotify_client_id.selected = Selected::None;
+                                self.config.spotify_client_secret.selected = Selected::Focused;
+                                self.config_menu_state.select_next();
+                            }
+                            2 => {
+                                self.config.spotify_client_secret.selected = Selected::None;
+                                self.config.dlp_path.selected = Selected::Focused;
+                                self.config_menu_state.select_first();
+                            }
+                            _ => panic!("Index out of range for config menu"),
+                        }
+                    }
+                }
             }
         }
     }
@@ -1003,7 +1154,31 @@ impl App<'_> {
                 Window::GlobalSongs => {
                     select_previous!(self.global_songs, self.global_song_list_state);
                 }
-                Window::DownloadManager => self.log = String::from("toooDOOOTOO"),
+                Window::DownloadManager => {
+                    self.log = String::from("DownloadManager TODO! select_previous")
+                }
+                Window::ConfigurationMenu => {
+                    if let Some(idx) = self.config_menu_state.selected() {
+                        match idx {
+                            0 => {
+                                self.config.dlp_path.selected = Selected::None;
+                                self.config.spotify_client_secret.selected = Selected::Focused;
+                                self.config_menu_state.select_last();
+                            }
+                            1 => {
+                                self.config.spotify_client_id.selected = Selected::None;
+                                self.config.dlp_path.selected = Selected::Focused;
+                                self.config_menu_state.select_previous();
+                            }
+                            2 => {
+                                self.config.spotify_client_secret.selected = Selected::None;
+                                self.config.spotify_client_id.selected = Selected::Focused;
+                                self.config_menu_state.select_previous();
+                            }
+                            _ => panic!("Index out of range for config menu"),
+                        }
+                    }
+                }
             }
         }
     }
@@ -1040,6 +1215,7 @@ impl App<'_> {
                 Window::Songs => self.enter_input_mode(InputMode::AddSongToPlaylist),
                 Window::GlobalSongs => self.enter_input_mode(InputMode::AddGlobalSong),
                 Window::DownloadManager => self.enter_input_mode(InputMode::DownloadLink),
+                Window::ConfigurationMenu => {}
             }
         } else {
             self.enter_input_mode(InputMode::AddPlaylist);
@@ -1105,7 +1281,12 @@ impl App<'_> {
                         }
                     }
                 }
-                Window::DownloadManager => self.log = String::from("totototototo"),
+                Window::DownloadManager => {
+                    self.log = String::from("DownloadManager TODO! remove_current")
+                }
+                Window::ConfigurationMenu => {
+                    self.log = String::from("Configuration TODO! remove_current")
+                }
             }
         }
     }
