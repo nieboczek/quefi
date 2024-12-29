@@ -16,7 +16,7 @@ To configure Quefi, you can open the configuration menu using `c` and browse var
 Top - most priority; bottom - least priority
 
 - [x]  Order items correctly when downloading playlist from Spotify
-- [ ]  Make the configuration menu
+- [x]  Make the configuration menu
 - [ ]  Make download manager have items that keep track of what's going on
 - [ ]  Show how many seconds left of song when playing
 - [ ]  Compare song duration from Spotify & YouTube to make searches a little bit more accurate
