@@ -32,3 +32,11 @@ macro_rules! select_previous {
         }
     };
 }
+
+#[macro_export]
+macro_rules! select {
+    ($vec:expr, $state:expr, $idx:expr) => {
+        $state.select(Some($idx));
+        $vec[$idx].selected = Selected::Focused;
+    };
+}

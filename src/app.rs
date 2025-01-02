@@ -159,7 +159,7 @@ pub(crate) struct App<'a> {
     downloads: Vec<Download>,
     last_queue_length: usize,
     global_songs: Vec<Song>,
-    textarea: TextArea<'a>,
+    text_area: TextArea<'a>,
     _stream: OutputStream,
     valid_input: bool,
     songs: Vec<Song>,
@@ -225,7 +225,7 @@ impl App<'_> {
             playing: Playing::None,
             log: String::from("Initialized!"),
             mode: Mode::Normal,
-            textarea: TextArea::default(),
+            text_area: TextArea::default(),
             valid_input: false,
         }
     }
@@ -268,7 +268,7 @@ impl App<'_> {
                             _ => {
                                 let input: Input = key.into();
                                 if !(input.key == Key::Char('m') && input.ctrl)
-                                    && self.textarea.input(key)
+                                    && self.text_area.input(key)
                                 {
                                     self.validate_input();
                                 }
@@ -307,8 +307,10 @@ impl App<'_> {
             Ok(TaskReturn::PlaylistInfo(playlist_info)) => {
                 self.log = String::from("Playlist fetched successfully! Starting search...");
 
+                let tracks_len = playlist_info.tracks.len();
+
                 self.save_data.playlists.push(SerializablePlaylist {
-                    songs: Vec::new(),
+                    songs: vec![String::new(); tracks_len],
                     name: playlist_info.name.clone(),
                 });
 
@@ -318,7 +320,7 @@ impl App<'_> {
                             name: String::new(),
                             path: String::new()
                         };
-                        playlist_info.tracks.len()
+                        tracks_len
                     ],
                     selected: Selected::None,
                     playing: false,
@@ -388,7 +390,7 @@ impl App<'_> {
                     selected: Selected::None,
                 });
 
-                self.save_data.playlists[idx].songs.push(song_name.clone());
+                self.save_data.playlists[idx].songs[song_idx] = song_name.clone();
                 self.save_data.songs.push(song.clone());
 
                 self.playlists[idx].songs[song_idx] = song;
@@ -590,28 +592,29 @@ impl App<'_> {
     }
 
     fn increase_volume(&mut self) {
-        let volume = self.sink.volume();
-        if volume >= 5.0 {
+        let new_volume = self.sink.volume() + 0.05;
+        if new_volume >= 5.05 {
             self.log = String::from("Volume can't be above 500%");
-            return;
+        } else {
+            self.sink.set_volume(new_volume);
+            self.save_data.last_volume = new_volume;
         }
-        self.sink.set_volume(volume + 0.05);
     }
 
     fn decrease_volume(&mut self) {
         let new_volume = self.sink.volume() - 0.05;
         if new_volume < 0. {
             self.log = String::from("Volume can't be negative!");
-            self.sink.set_volume(0.);
         } else {
             self.sink.set_volume(new_volume);
+            self.save_data.last_volume = new_volume;
         }
     }
 
     fn validate_input(&mut self) {
         match self.mode {
             Mode::Input(InputMode::AddPlaylist) => {
-                let text = self.textarea.lines()[0].trim();
+                let text = self.text_area.lines()[0].trim();
                 let mut name_exists = false;
                 for playlist in &self.save_data.playlists {
                     if playlist.name == text {
@@ -637,7 +640,7 @@ impl App<'_> {
                 );
             }
             Mode::Input(InputMode::AddSongToPlaylist) => {
-                let text = self.textarea.lines()[0].trim();
+                let text = self.text_area.lines()[0].trim();
                 let mut name_exists = false;
                 for song in &self.save_data.songs {
                     if song.name == text {
@@ -653,7 +656,7 @@ impl App<'_> {
                 );
             }
             Mode::Input(InputMode::AddGlobalSong) => {
-                let text = self.textarea.lines()[0].trim();
+                let text = self.text_area.lines()[0].trim();
                 let mut name_exists = false;
                 for song in &self.save_data.songs {
                     if song.name == text {
@@ -679,7 +682,7 @@ impl App<'_> {
                 );
             }
             Mode::Input(InputMode::ChooseFile(_)) => {
-                let path = Path::new(&self.textarea.lines()[0]);
+                let path = Path::new(&self.text_area.lines()[0]);
                 // TODO: Symlinks??? More file formats???
                 self.textarea_condition(
                     path.exists()
@@ -690,13 +693,13 @@ impl App<'_> {
                 )
             }
             Mode::Input(InputMode::DownloadLink) => self.textarea_condition(
-                is_valid_youtube_link(&self.textarea.lines()[0])
-                    || validate_spotify_link(&self.textarea.lines()[0]) != SpotifyLink::Invalid,
+                is_valid_youtube_link(&self.text_area.lines()[0])
+                    || validate_spotify_link(&self.text_area.lines()[0]) != SpotifyLink::Invalid,
                 String::from("Input Spotify/YouTube link"),
                 String::from("Invalid Spotify/YouTube link"),
             ),
             Mode::Input(InputMode::GetDlp) => {
-                let text = &self.textarea.lines()[0].to_ascii_lowercase();
+                let text = &self.text_area.lines()[0].to_ascii_lowercase();
                 self.textarea_condition(
                     text == "y" || text == "n",
                     String::from("Download yt-dlp now?"),
@@ -704,7 +707,7 @@ impl App<'_> {
                 )
             }
             Mode::Input(InputMode::DlpPath) => {
-                let path = Path::new(&self.textarea.lines()[0]);
+                let path = Path::new(&self.text_area.lines()[0]);
 
                 #[cfg(target_os = "windows")]
                 let extension = "exe";
@@ -721,12 +724,12 @@ impl App<'_> {
                 )
             }
             Mode::Input(InputMode::SpotifyClientId) => self.textarea_condition(
-                self.textarea.lines()[0].len() == 32,
+                self.text_area.lines()[0].len() == 32,
                 String::from("Input Spotify Client ID"),
                 String::from("Invalid Spotify Client ID"),
             ),
             Mode::Input(InputMode::SpotifyClientSecret) => self.textarea_condition(
-                self.textarea.lines()[0].len() == 32,
+                self.text_area.lines()[0].len() == 32,
                 String::from("Input Spotify Client Secret"),
                 String::from("Invalid Spotify Client Secret"),
             ),
@@ -740,7 +743,7 @@ impl App<'_> {
                 .title(title)
                 .style(Style::default().light_green())
                 .border_set(border::THICK);
-            self.textarea.set_block(block);
+            self.text_area.set_block(block);
             self.valid_input = true;
         } else {
             let block = Block::bordered()
@@ -748,7 +751,7 @@ impl App<'_> {
                 .title_bottom(bad_input)
                 .style(Style::default().light_red())
                 .border_set(border::THICK);
-            self.textarea.set_block(block);
+            self.text_area.set_block(block);
             self.valid_input = false;
         }
     }
@@ -760,22 +763,32 @@ impl App<'_> {
         self.log = String::from("Submitted input");
         match &self.mode {
             Mode::Input(InputMode::AddPlaylist) => {
-                let input = &self.textarea.lines()[0];
+                let input = &self.text_area.lines()[0];
+                let was_empty = self.playlists.is_empty();
+
                 self.save_data.playlists.push(SerializablePlaylist {
                     name: input.clone(),
                     songs: Vec::new(),
                 });
+
                 self.playlists.push(Playlist {
                     songs: Vec::new(),
                     selected: Selected::None,
                     playing: false,
                     name: input.clone(),
                 });
-                // TODO: Select new playlist if no playlists are there
+
+                if was_empty {
+                    select!(self.playlists, self.playlist_list_state, 0);
+                    self.see_songs_in_playlist();
+                }
+
                 self.exit_input_mode();
             }
             Mode::Input(InputMode::AddSongToPlaylist) => {
-                let song_name = self.textarea.lines()[0].clone();
+                let song_name = self.text_area.lines()[0].clone();
+                let was_empty = self.songs.is_empty();
+
                 let mut song_path = String::new();
                 for song in &self.save_data.songs {
                     if song.name == song_name {
@@ -812,32 +825,50 @@ impl App<'_> {
                     },
                 );
 
+                if was_empty {
+                    select!(self.songs, self.song_list_state, 0);
+                }
+
                 self.exit_input_mode();
             }
             Mode::Input(InputMode::AddGlobalSong) => {
-                let input = self.textarea.lines()[0].clone();
-                self.textarea.move_cursor(CursorMove::Head);
-                self.textarea.delete_line_by_end();
+                let input = self.text_area.lines()[0].clone();
+                self.text_area.move_cursor(CursorMove::Head);
+                self.text_area.delete_line_by_end();
 
                 self.mode = Mode::Input(InputMode::ChooseFile(input));
                 self.validate_input();
             }
             Mode::Input(InputMode::ChooseFile(song_name)) => {
-                let input = self.textarea.lines()[0].clone();
+                let input = self.text_area.lines()[0].clone();
+                let was_empty = self.global_songs.is_empty();
+
+                self.global_songs.push(Song {
+                    selected: Selected::None,
+                    name: song_name.clone(),
+                    path: input.clone(),
+                    playing: false,
+                });
+
                 self.save_data.songs.push(SerializableSong {
                     name: song_name.clone(),
                     path: input,
                 });
+
+                if was_empty {
+                    select!(self.global_songs, self.global_song_list_state, 0);
+                }
+
                 self.exit_input_mode();
             }
             Mode::Input(InputMode::DownloadLink) => {
-                let link = validate_spotify_link(&self.textarea.lines()[0]);
+                let link = validate_spotify_link(&self.text_area.lines()[0]);
                 self.action_on_link(link);
 
                 self.exit_input_mode();
             }
             Mode::Input(InputMode::GetDlp) => {
-                if &self.textarea.lines()[0] == "n" {
+                if &self.text_area.lines()[0] == "n" {
                     self.exit_input_mode();
                     return;
                 }
@@ -849,22 +880,22 @@ impl App<'_> {
                 self.exit_input_mode();
             }
             Mode::Input(InputMode::DlpPath) => {
-                let input = self.textarea.lines()[0].clone();
+                let input = self.text_area.lines()[0].clone();
                 self.config.dlp_path.value = input.clone();
                 self.save_data.dlp_path = input;
                 self.exit_input_mode();
             }
             Mode::Input(InputMode::SpotifyClientId) => {
-                let input = self.textarea.lines()[0].clone();
+                let input = self.text_area.lines()[0].clone();
                 self.config.spotify_client_id.value = input.clone();
                 self.save_data.spotify_client_id = input;
                 self.exit_input_mode();
             }
             Mode::Input(InputMode::SpotifyClientSecret) => {
-                let input = self.textarea.lines()[0].clone();
+                let input = self.text_area.lines()[0].clone();
                 self.config.spotify_client_secret.value = input.clone();
                 self.save_data.spotify_client_secret = input;
-                self.textarea.clear_mask_char();
+                self.text_area.clear_mask_char();
                 self.exit_input_mode();
             }
             _ => unreachable!(),
@@ -901,7 +932,7 @@ impl App<'_> {
             }
             SpotifyLink::Invalid => {
                 let dlp_path = self.save_data.dlp_path.clone();
-                let input = self.textarea.lines()[0].clone();
+                let input = self.text_area.lines()[0].clone();
 
                 self.join_handles.push(tokio::spawn(async move {
                     download_song(
@@ -1098,7 +1129,7 @@ impl App<'_> {
                             0 => self.enter_input_mode(InputMode::DlpPath),
                             1 => self.enter_input_mode(InputMode::SpotifyClientId),
                             2 => {
-                                self.textarea.set_mask_char('*');
+                                self.text_area.set_mask_char('*');
 
                                 self.enter_input_mode(InputMode::SpotifyClientSecret)
                             }
@@ -1244,10 +1275,14 @@ impl App<'_> {
                     }
                 }
 
-                if idx == self.playlists.len() {
-                    self.playlist_list_state.select(Some(idx - 1));
-                    self.playlists[idx - 1].selected = Selected::Focused;
-                    self.see_songs_in_playlist();
+                if !self.playlists.is_empty() {
+                    if idx == self.playlists.len() {
+                        select!(self.playlists, self.playlist_list_state, idx - 1);
+                        self.see_songs_in_playlist();
+                    } else if idx == 0 {
+                        select!(self.playlists, self.playlist_list_state, 0);
+                        self.see_songs_in_playlist();
+                    }
                 }
             }
         } else {
@@ -1267,9 +1302,12 @@ impl App<'_> {
                             }
                         }
 
-                        if idx == self.songs.len() {
-                            self.song_list_state.select(Some(idx - 1));
-                            self.songs[idx - 1].selected = Selected::Focused;
+                        if !self.songs.is_empty() {
+                            if idx == self.songs.len() {
+                                select!(self.songs, self.song_list_state, idx - 1);
+                            } else if idx == 0 {
+                                select!(self.songs, self.song_list_state, 0);
+                            }
                         }
                     }
                 }
@@ -1284,9 +1322,12 @@ impl App<'_> {
                             }
                         }
 
-                        if idx == self.global_songs.len() {
-                            self.global_song_list_state.select(Some(idx - 1));
-                            self.global_songs[idx - 1].selected = Selected::Focused;
+                        if !self.global_songs.is_empty() {
+                            if idx == self.global_songs.len() {
+                                select!(self.global_songs, self.global_song_list_state, idx - 1);
+                            } else if idx == 0 {
+                                select!(self.global_songs, self.global_song_list_state, 0);
+                            }
                         }
                     }
                 }
@@ -1348,7 +1389,7 @@ impl App<'_> {
             self.enter_input_mode(InputMode::GetDlp);
         }
 
-        self.sink.set_volume(0.25);
+        self.sink.set_volume(self.save_data.last_volume);
         Ok(())
     }
 
@@ -1358,8 +1399,8 @@ impl App<'_> {
     }
 
     fn exit_input_mode(&mut self) {
-        self.textarea.move_cursor(CursorMove::Head);
-        self.textarea.delete_line_by_end();
+        self.text_area.move_cursor(CursorMove::Head);
+        self.text_area.delete_line_by_end();
         self.mode = Mode::Normal;
     }
 }

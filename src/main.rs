@@ -2,8 +2,7 @@ use app::{App, SerializablePlaylist, SerializableSong};
 use ratatui::{
     backend::{Backend, CrosstermBackend},
     crossterm::{
-        terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-        ExecutableCommand,
+        event::{DisableBracketedPaste, EnableBracketedPaste}, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}, ExecutableCommand
     },
     Terminal,
 };
@@ -25,6 +24,7 @@ mod youtube;
 #[derive(Serialize, Deserialize)]
 pub(crate) struct SaveData {
     dlp_path: String,
+    last_volume: f32,
     playlists: Vec<SerializablePlaylist>,
     songs: Vec<SerializableSong>,
     spotify_client_id: String,
@@ -131,6 +131,7 @@ fn load_data() -> SaveData {
                 playlists: Vec::new(),
                 songs: Vec::new(),
                 last_valid_token: String::new(),
+                last_volume: 0.25,
             };
             save_data(&data);
             return data;
@@ -161,6 +162,8 @@ pub(crate) fn make_safe_filename(input: &str) -> String {
 fn init_terminal() -> io::Result<Terminal<impl Backend>> {
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
+    stdout().execute(EnableBracketedPaste)?;
+
     let terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
     Ok(terminal)
 }
@@ -168,6 +171,8 @@ fn init_terminal() -> io::Result<Terminal<impl Backend>> {
 fn restore_terminal() -> io::Result<()> {
     disable_raw_mode()?;
     stdout().execute(LeaveAlternateScreen)?;
+    stdout().execute(DisableBracketedPaste)?;
+    
     Ok(())
 }
 

@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::app::{App, Mode, Playlist, Selected, Song};
 use ratatui::{
     buffer::Buffer,
@@ -28,7 +30,7 @@ impl Widget for &mut App<'_> {
             App::render_header(header_area, buf);
             self.render_playlists(playlist_area, buf);
             self.render_window(main_area, buf);
-            self.textarea.render(input_area, buf);
+            self.text_area.render(input_area, buf);
             self.render_player(player_area, buf);
             self.render_log(log_area, buf);
         } else {
@@ -92,8 +94,10 @@ impl App<'_> {
 
         let title: &str;
         let num: String;
+        let remaining_song_time: Duration;
         if !self.song_queue.is_empty() {
             title = &self.song_queue[0].name;
+            remaining_song_time = self.song_queue[0].duration - self.sink.get_pos();
             let song_idx = self.song_queue[0].song_idx;
             if song_idx < 10 {
                 num = format!("0{song_idx}");
@@ -103,18 +107,23 @@ impl App<'_> {
         } else {
             title = "";
             num = String::from("XX");
+            remaining_song_time = Duration::from_secs(0);
         }
 
         Paragraph::new(format!(
-            "{num} {title}{}{repeat_symbol} 🔈{:.0}% {}\n{pause_symbol} {}",
+            "{num} {title}{}{repeat_symbol} 🔈{:.0}% {} \n{pause_symbol} {}{} {} ",
             // Spaces until other information won't fit
-            " ".repeat((area.as_size().width - 25 - title.len() as u16) as usize), //prev: - 24 -
+            " ".repeat((area.as_size().width - 26 - title.len() as u16) as usize),
             // Volume percentage
             self.sink.volume() * 100.,
             // Volume
             "━".repeat((self.sink.volume() * 10.) as usize),
             // Song progress
-            "━".repeat(((area.as_size().width - 6) as f32 * (1. - remaining_time)) as usize),
+            "━".repeat(((area.as_size().width - 11) as f32 * (1. - remaining_time)) as usize),
+            // Spaces until remaining time won't fit
+            " ".repeat(((area.as_size().width - 11) as f32 * remaining_time) as usize),
+            // Remaining time
+            format_duration(remaining_song_time),
         ))
         .block(block)
         .render(area, buf);
@@ -201,6 +210,12 @@ impl App<'_> {
             .centered()
             .render(area, buf);
     }
+}
+
+fn format_duration(duration: Duration) -> String {
+    let minutes = duration.as_secs() / 60;
+    let seconds = duration.as_secs() % 60;
+    format!("{}:{:02}", minutes, seconds)
 }
 
 impl From<&Playlist> for ListItem<'_> {
