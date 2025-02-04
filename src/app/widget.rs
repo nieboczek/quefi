@@ -92,12 +92,15 @@ impl App<'_> {
             1.0
         };
 
+        let remaining_song_time: Duration;
         let title: &str;
         let num: String;
-        let remaining_song_time: Duration;
         if !self.song_queue.is_empty() {
+            remaining_song_time = self.song_queue[0]
+                .duration
+                .saturating_sub(self.sink.get_pos());
             title = &self.song_queue[0].name;
-            remaining_song_time = self.song_queue[0].duration - self.sink.get_pos();
+
             let song_idx = self.song_queue[0].song_idx;
             if song_idx < 10 {
                 num = format!("0{song_idx}");
@@ -110,6 +113,14 @@ impl App<'_> {
             remaining_song_time = Duration::from_secs(0);
         }
 
+        let progress_width = area.as_size().width - 11;
+        let progress = (progress_width as f32 * (1. - remaining_time)) as usize;
+        let mut inverted_progress = (progress_width as f32 * remaining_time) as usize;
+
+        if progress + inverted_progress != progress_width as usize {
+            inverted_progress += 1;
+        }
+
         Paragraph::new(format!(
             "{num} {title}{}{repeat_symbol} 🔈{:.0}% {} \n{pause_symbol} {}{} {} ",
             // Spaces until other information won't fit
@@ -119,9 +130,9 @@ impl App<'_> {
             // Volume
             "━".repeat((self.sink.volume() * 10.) as usize),
             // Song progress
-            "━".repeat(((area.as_size().width - 11) as f32 * (1. - remaining_time)) as usize),
+            "━".repeat(progress),
             // Spaces until remaining time won't fit
-            " ".repeat(((area.as_size().width - 11) as f32 * remaining_time) as usize),
+            " ".repeat(inverted_progress),
             // Remaining time
             format_duration(remaining_song_time),
         ))
@@ -178,7 +189,7 @@ impl App<'_> {
                     &mut self.song_list_state,
                 ),
                 Window::DownloadManager => StatefulWidget::render(
-                    List::new(&self.downloads).block(block),
+                    List::new(self.downloads.values()).block(block),
                     area,
                     buf,
                     &mut self.download_state,
@@ -251,31 +262,78 @@ impl From<&Song> for ListItem<'_> {
 }
 
 impl From<&Download> for ListItem<'_> {
-    fn from(_value: &Download) -> Self {
-        ListItem::from("")
+    fn from(value: &Download) -> Self {
+        match value {
+            Download::ProcessingPlaylistSongs(processing) => ListItem::from(format!(
+                "Searching songs for {} ({}/{}):\n{}\nDownloading songs for {} ({}/{}):\n{}",
+                processing.playlist_name,
+                processing.searched,
+                processing.total_to_search,
+                {
+                    let mut songs = processing
+                        .searching_songs
+                        .iter()
+                        .take(4)
+                        .map(|song| format!(" {}", song))
+                        .collect::<Vec<_>>();
+
+                    if processing.searching_songs.len() > 4 {
+                        songs.push("...".to_string());
+                    }
+
+                    songs.join("\n")
+                },
+                processing.playlist_name,
+                processing.downloaded,
+                processing.total_to_download,
+                {
+                    let mut songs = processing
+                        .downloading_songs
+                        .iter()
+                        .take(4)
+                        .map(|song| format!(" {}", song))
+                        .collect::<Vec<_>>();
+
+                    if processing.downloading_songs.len() > 4 {
+                        songs.push("...".to_string());
+                    }
+
+                    songs.join("\n")
+                },
+            )),
+            Download::FetchingSpotifyToken => ListItem::from("Fetching Spotify token..."),
+            Download::FetchingPlaylistInfo => ListItem::from("Fetching playlist info..."),
+            Download::FetchingTrackInfo => ListItem::from("Fetching track info..."),
+            Download::SearchingForSong(query) => {
+                ListItem::from(format!("Searching for {}...", query))
+            }
+            Download::DownloadingSong(name) => ListItem::from(format!("Downloading {}...", name)),
+            Download::DownloadingYoutubeSong => ListItem::from("Downloading song from YouTube..."),
+            Download::Empty => panic!("Tried to display empty download"), // TODO: check if it always crashes
+        }
     }
 }
 
 impl From<&ConfigField> for ListItem<'_> {
-    fn from(field: &ConfigField) -> Self {
-        let prefix = match field.selected {
+    fn from(value: &ConfigField) -> Self {
+        let prefix = match value.selected {
             Selected::None => String::from("   "),
             Selected::Focused => String::from("►  "),
             Selected::Unfocused => String::from("⇨  "),
         };
 
-        let name = match field.field_type {
+        let name = match value.field_type {
             ConfigFieldType::DlpPath => "DLP path: ",
             ConfigFieldType::SpotifyClientId => "Spotify client ID: ",
             ConfigFieldType::SpotifyClientSecret => "Spotify client secret: ",
         };
 
-        let value = match field.field_type {
-            ConfigFieldType::DlpPath => &field.value,
-            ConfigFieldType::SpotifyClientId => &field.value,
+        let value = match value.field_type {
+            ConfigFieldType::DlpPath => &value.value,
+            ConfigFieldType::SpotifyClientId => &value.value,
             ConfigFieldType::SpotifyClientSecret => "********************************",
         };
 
-        ListItem::from(format!("{}{}{}", prefix, name, value))
+        ListItem::from(prefix + name + value)
     }
 }

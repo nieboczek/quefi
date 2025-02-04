@@ -84,16 +84,17 @@ pub async fn download_dlp(client: &Client) -> TaskResult {
 }
 
 pub async fn download_song(
+    id: u8,
     dlp_path: &str,
     yt_link: &str,
     filename: &str,
     search_for: SearchFor,
 ) -> TaskResult {
-    let dir = get_quefi_dir();
+    let song_dir = get_quefi_dir().join("songs");
 
     #[cfg(not(target_os = "windows"))]
     let mut child = Command::new(dlp_path)
-        .current_dir(dir.join("songs"))
+        .current_dir(song_dir)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .args([
@@ -110,7 +111,7 @@ pub async fn download_song(
     #[cfg(target_os = "windows")]
     let mut child = Command::new(dlp_path)
         .creation_flags(0x08000000) // Create no window
-        .current_dir(dir.join("songs"))
+        .current_dir(song_dir)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .args([
@@ -125,7 +126,7 @@ pub async fn download_song(
         .spawn()?;
 
     child.wait().await?;
-    Ok(TaskReturn::SongDownloaded(search_for))
+    Ok(TaskReturn::SongDownloaded(id, search_for))
 }
 
 fn get_timestamp() -> String {
@@ -277,7 +278,12 @@ fn parse_duration(duration: &str) -> u32 {
     milliseconds
 }
 
-pub async fn search_ytmusic(client: &Client, query: &str, search_for: SearchFor) -> TaskResult {
+pub async fn search_ytmusic(
+    id: u8,
+    client: &Client,
+    query: &str,
+    search_for: SearchFor,
+) -> TaskResult {
     let body = Body {
         query,
         // Filter only for songs, ignore spelling mistakes
@@ -317,7 +323,9 @@ pub async fn search_ytmusic(client: &Client, query: &str, search_for: SearchFor)
                 shelf_contents = renderer["contents"].as_array().unwrap();
             }
         }
+
         return Ok(TaskReturn::SearchResult(
+            id,
             parse_search_result(&shelf_contents[0]["musicResponsiveListItemRenderer"]),
             search_for,
         ));

@@ -15,15 +15,14 @@ To configure Quefi, you can open the configuration menu using `c` and browse var
 ## TODO
 Top - most priority; bottom - least priority
 
-- [x]  Order items correctly when downloading playlist from Spotify
-- [x]  Make the configuration menu
-- [x]  Show how many seconds left of song when playing
-- [ ]  Make download manager have items that keep track of what's going on
-- [ ]  Compare song duration from Spotify & YouTube to make searches a little bit more accurate
-- [ ]  Show which song is played in playlist
-- [ ]  Make repeat one mode work
-- [ ]  Discord Rich Presence
-- [ ]  Make mouse interact with elements
+- Make download manager have items that keep track of what's going on
+- Compare song duration from Spotify & YouTube to make searches a little bit more accurate
+- Show which song is played in playlist
+- Make repeat one mode work
+- Make downloading songs from YouTube link work better
+- Limit amount of searching/downloading requests at once
+- Discord Rich Presence
+- Make mouse interact with elements
 
 ## Contributing
 Contributions, bug reports, new features and questions are always welcome!

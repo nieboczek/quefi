@@ -2,7 +2,8 @@ use app::{App, SerializablePlaylist, SerializableSong};
 use ratatui::{
     backend::{Backend, CrosstermBackend},
     crossterm::{
-        event::{DisableBracketedPaste, EnableBracketedPaste}, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}, ExecutableCommand
+        terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+        ExecutableCommand,
     },
     Terminal,
 };
@@ -33,14 +34,15 @@ pub(crate) struct SaveData {
 }
 
 type TaskResult = Result<TaskReturn, Error>;
+type DownloadId = u8;
 
 #[derive(Debug)]
 pub(crate) enum TaskReturn {
-    SearchResult(SearchResult, SearchFor),
-    Token(String, SpotifyLink),
-    PlaylistInfo(PlaylistInfo),
-    SongDownloaded(SearchFor),
-    TrackInfo(TrackInfo),
+    SearchResult(DownloadId, SearchResult, SearchFor),
+    Token(DownloadId, String, SpotifyLink),
+    PlaylistInfo(DownloadId, PlaylistInfo),
+    SongDownloaded(DownloadId, SearchFor),
+    TrackInfo(DownloadId, TrackInfo),
     DlpDownloaded,
 }
 
@@ -50,14 +52,14 @@ type SongIdx = usize;
 
 #[derive(Debug)]
 pub(crate) enum SearchFor {
-    /// `usize` is playlist index, it may be inaccurate when a playlist is added, fix would be needed! TODO
+    // TODO: PlaylistIdx may be inaccurate when a new playlist is added, fix would be needed!
     Playlist(PlaylistIdx, SongName, SongIdx),
-    GlobalSong(String),
+    GlobalSong(SongName),
 }
 
 #[derive(Debug)]
 pub(crate) enum Error {
-    SpotifyBadAuth(SpotifyLink),
+    SpotifyBadAuth(DownloadId, SpotifyLink),
     Http(reqwest::Error),
     Io(std::io::Error),
     YtMusic,
@@ -81,18 +83,9 @@ impl Display for Error {
             Self::Http(err) => write!(f, "HTTP Error: {err}"),
             Self::Io(err) => write!(f, "IO Error: {err}"),
             Self::YtMusic => write!(f, "Failed to search YT Music"),
-            &Self::SpotifyBadAuth(_) => {
+            &Self::SpotifyBadAuth(..) => {
                 panic!("Wanted to display Error::SpotifyBadAuth")
             }
-        }
-    }
-}
-
-impl SearchFor {
-    fn song_name(&self) -> &String {
-        match self {
-            SearchFor::GlobalSong(name) => name,
-            SearchFor::Playlist(_, name, _) => name,
         }
     }
 }
@@ -162,7 +155,6 @@ pub(crate) fn make_safe_filename(input: &str) -> String {
 fn init_terminal() -> io::Result<Terminal<impl Backend>> {
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
-    stdout().execute(EnableBracketedPaste)?;
 
     let terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
     Ok(terminal)
@@ -171,8 +163,7 @@ fn init_terminal() -> io::Result<Terminal<impl Backend>> {
 fn restore_terminal() -> io::Result<()> {
     disable_raw_mode()?;
     stdout().execute(LeaveAlternateScreen)?;
-    stdout().execute(DisableBracketedPaste)?;
-    
+
     Ok(())
 }
 

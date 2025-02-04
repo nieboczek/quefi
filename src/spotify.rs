@@ -92,7 +92,7 @@ fn transform_track_metadata(metadata: ApiTrackMetadata) -> TrackInfo {
     }
 }
 
-pub async fn fetch_track_info(client: &Client, track_id: &str, token: &str) -> TaskResult {
+pub async fn fetch_track_info(id: u8, client: &Client, track_id: &str, token: &str) -> TaskResult {
     let url = format!("https://api.spotify.com/v1/tracks/{}", track_id);
 
     let result = client.get(&url).bearer_auth(token).send().await;
@@ -100,13 +100,17 @@ pub async fn fetch_track_info(client: &Client, track_id: &str, token: &str) -> T
     match result {
         Ok(res) => {
             let metadata: ApiTrackMetadata = res.json().await?;
-            Ok(TaskReturn::TrackInfo(transform_track_metadata(metadata)))
+            Ok(TaskReturn::TrackInfo(
+                id,
+                transform_track_metadata(metadata),
+            ))
         }
         Err(err) => {
             if err.status().unwrap().as_u16() == 401 {
-                Err(Error::SpotifyBadAuth(SpotifyLink::Track(
-                    track_id.to_string(),
-                )))
+                Err(Error::SpotifyBadAuth(
+                    id,
+                    SpotifyLink::Track(track_id.to_string()),
+                ))
             } else {
                 Err(Error::Http(err))
             }
@@ -114,7 +118,12 @@ pub async fn fetch_track_info(client: &Client, track_id: &str, token: &str) -> T
     }
 }
 
-pub async fn fetch_playlist_info(client: &Client, playlist_id: &str, token: &str) -> TaskResult {
+pub async fn fetch_playlist_info(
+    id: u8,
+    client: &Client,
+    playlist_id: &str,
+    token: &str,
+) -> TaskResult {
     let url = format!("https://api.spotify.com/v1/playlists/{}?fields=name,tracks.items(track(name,artists(name),duration_ms))", playlist_id);
 
     let result = client.get(&url).bearer_auth(token).send().await;
@@ -122,27 +131,32 @@ pub async fn fetch_playlist_info(client: &Client, playlist_id: &str, token: &str
     match result {
         Ok(res) => {
             if res.status().as_u16() == 401 {
-                return Err(Error::SpotifyBadAuth(SpotifyLink::Playlist(
-                    playlist_id.to_string(),
-                )));
+                return Err(Error::SpotifyBadAuth(
+                    id,
+                    SpotifyLink::Playlist(playlist_id.to_string()),
+                ));
             }
 
             let metadata: ApiPlaylistMetadata = res.json().await?;
-            Ok(TaskReturn::PlaylistInfo(PlaylistInfo {
-                tracks: metadata
-                    .tracks
-                    .items
-                    .into_iter()
-                    .map(|track| transform_track_metadata(track.track))
-                    .collect::<Vec<TrackInfo>>(),
-                name: metadata.name,
-            }))
+            Ok(TaskReturn::PlaylistInfo(
+                id,
+                PlaylistInfo {
+                    tracks: metadata
+                        .tracks
+                        .items
+                        .into_iter()
+                        .map(|track| transform_track_metadata(track.track))
+                        .collect::<Vec<TrackInfo>>(),
+                    name: metadata.name,
+                },
+            ))
         }
         Err(err) => Err(Error::Http(err)),
     }
 }
 
 pub async fn create_token(
+    id: u8,
     client: &Client,
     client_id: &str,
     client_secret: &str,
@@ -156,7 +170,7 @@ pub async fn create_token(
         .await?;
 
     let token: ApiTokenResponse = res.json().await?;
-    Ok(TaskReturn::Token(token.access_token, link))
+    Ok(TaskReturn::Token(id, token.access_token, link))
 }
 
 // TODO: Make a function to access all track of playlist (fetch_playlist_info only lists the first 100)
