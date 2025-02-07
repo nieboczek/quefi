@@ -1482,17 +1482,7 @@ impl App<'_> {
         if !Path::new(&self.save_data.dlp_path).exists() {
             self.enter_input_mode(InputMode::GetDlp);
         }
-
-        use std::fs::File;
-        use std::io::Write;
         
-        let file_path = "playlist_songs.txt";
-        let mut file = File::create(file_path).expect("Unable to create file");
-    
-        for song in &self.save_data.playlists[2].songs {
-            writeln!(file, "{song}").expect("Unable to write to file");
-        }
-
         self.sink.set_volume(self.save_data.last_volume);
         Ok(())
     }
