@@ -5,7 +5,7 @@ It's perfect for listening to music while working on your computer or just chill
 <!-- Screenshots here -->
 
 ## Installation
-Grab a pre-built executable file for your system [here](https://github.com/nieboczek/quefi/releases/latest) or compile it yourself by using `cargo build`.
+~~Grab a pre-built executable file for your system [here](https://github.com/nieboczek/quefi/releases/latest)~~ (once quefi becomes more stable) or compile it yourself by using `cargo build`.
 
 Optionally download [yt-dlp](https://github.com/yt-dlp/yt-dlp/releases/) to use Spotify playlist/track downloader.
 

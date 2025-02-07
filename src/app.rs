@@ -1429,12 +1429,8 @@ impl App<'_> {
                         }
                     }
                 }
-                Window::DownloadManager => {
-                    self.log = String::from("DownloadManager TODO! remove_current")
-                }
-                Window::ConfigurationMenu => {
-                    self.log = String::from("Configuration TODO! remove_current")
-                }
+                Window::DownloadManager => {}
+                Window::ConfigurationMenu => {}
             }
         }
     }
@@ -1443,12 +1439,12 @@ impl App<'_> {
         let mut first = true;
 
         for playlist in &self.save_data.playlists {
-            let songs = self
-                .save_data
+            let songs = playlist
                 .songs
                 .iter()
-                .filter(|song| playlist.songs.contains(&song.name))
-                .cloned()
+                .filter_map(|song_name| {
+                    self.save_data.songs.iter().find(|song| &song.name == song_name).cloned()
+                })
                 .collect();
 
             self.playlists.push(Playlist {
@@ -1485,6 +1481,16 @@ impl App<'_> {
 
         if !Path::new(&self.save_data.dlp_path).exists() {
             self.enter_input_mode(InputMode::GetDlp);
+        }
+
+        use std::fs::File;
+        use std::io::Write;
+        
+        let file_path = "playlist_songs.txt";
+        let mut file = File::create(file_path).expect("Unable to create file");
+    
+        for song in &self.save_data.playlists[2].songs {
+            writeln!(file, "{song}").expect("Unable to write to file");
         }
 
         self.sink.set_volume(self.save_data.last_volume);
