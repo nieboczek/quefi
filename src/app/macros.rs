@@ -2,6 +2,16 @@
 macro_rules! select_next {
     ($vec:expr, $state:expr) => {
         if let Some(idx) = $state.selected() {
+            if $vec[idx].selected == Selected::Moving {
+                if idx + 1 == $vec.len() {
+                    $state.select_first();
+                    $vec.swap(idx, 0);
+                } else {
+                    $state.select(Some(idx + 1));
+                    $vec.swap(idx, idx + 1);
+                }
+                return;
+            }
             if idx + 1 == $vec.len() {
                 $vec[idx].selected = Selected::None;
                 $state.select_first();
@@ -19,6 +29,17 @@ macro_rules! select_next {
 macro_rules! select_previous {
     ($vec:expr, $state:expr) => {
         if let Some(idx) = $state.selected() {
+            if $vec[idx].selected == Selected::Moving {
+                if idx == 0 {
+                    let new_index = $vec.len() - 1;
+                    $state.select(Some(new_index));
+                    $vec.swap(idx, new_index);
+                } else {
+                    $state.select(Some(idx - 1));
+                    $vec.swap(idx, idx - 1);
+                }
+                return;
+            }
             if idx == 0 {
                 $vec[idx].selected = Selected::None;
                 let new_index = $vec.len() - 1;

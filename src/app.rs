@@ -71,6 +71,7 @@ enum Window {
 #[derive(Debug, PartialEq, Clone, Copy)]
 enum Selected {
     None,
+    Moving,
     Focused,
     Unfocused,
 }
@@ -271,6 +272,7 @@ impl App<'_> {
                             KeyCode::Char('a') => self.add_item(),
                             KeyCode::Char('n') => self.remove_current(),
                             KeyCode::Char('r') => self.toggle_repeat(),
+                            KeyCode::Char('m') => self.move_item(),
                             KeyCode::Char('f') => self.sink.skip_one(),
                             KeyCode::Char('g') => self.window = Window::GlobalSongs,
                             KeyCode::Char('d') => self.window = Window::DownloadManager,
@@ -554,6 +556,40 @@ impl App<'_> {
         }
     }
 
+    fn move_item(&mut self) {
+        if self.focused == Focused::Left {
+            if let Some(idx) = self.playlist_list_state.selected() {
+                if self.playlists[idx].selected == Selected::Moving {
+                    self.playlists[idx].selected = Selected::Focused;
+                } else {
+                    self.playlists[idx].selected = Selected::Moving;
+                }
+            }
+        } else {
+            match self.window {
+                Window::Songs => {
+                    if let Some(idx) = self.song_list_state.selected() {
+                        if self.songs[idx].selected == Selected::Moving {
+                            self.songs[idx].selected = Selected::Focused;
+                        } else {
+                            self.songs[idx].selected = Selected::Moving;
+                        }
+                    }
+                }
+                Window::GlobalSongs => {
+                    if let Some(idx) = self.global_song_list_state.selected() {
+                        if self.global_songs[idx].selected == Selected::Moving {
+                            self.global_songs[idx].selected = Selected::Focused;
+                        } else {
+                            self.global_songs[idx].selected = Selected::Moving;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn toggle_repeat(&mut self) {
         self.repeat = match self.repeat {
             Repeat::All => Repeat::One,
@@ -576,9 +612,7 @@ impl App<'_> {
                     self.global_songs[idx].selected = Selected::Unfocused;
                 }
             }
-            Window::DownloadManager => {
-                self.log = String::from("DownloadManager TODO! select_left_window")
-            }
+            Window::DownloadManager => {}
             Window::ConfigurationMenu => {
                 if let Some(idx) = self.config_menu_state.selected() {
                     match idx {
@@ -610,9 +644,7 @@ impl App<'_> {
                     self.global_songs[idx].selected = Selected::Focused;
                 }
             }
-            Window::DownloadManager => {
-                self.log = String::from("DownloadManager TODO! select_right_window")
-            }
+            Window::DownloadManager => {}
             Window::ConfigurationMenu => {
                 if let Some(idx) = self.config_menu_state.selected() {
                     match idx {
@@ -1251,9 +1283,7 @@ impl App<'_> {
                 Window::GlobalSongs => {
                     select_next!(self.global_songs, self.global_song_list_state);
                 }
-                Window::DownloadManager => {
-                    self.log = String::from("DownloadManager TODO! select_next")
-                }
+                Window::DownloadManager => {}
                 Window::ConfigurationMenu => {
                     if let Some(idx) = self.config_menu_state.selected() {
                         match idx {

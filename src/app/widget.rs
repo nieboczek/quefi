@@ -233,6 +233,7 @@ impl From<&Playlist> for ListItem<'_> {
     fn from(value: &Playlist) -> Self {
         let mut prefix = match value.selected {
             Selected::None => String::from("   "),
+            Selected::Moving => String::from("⇅  "),
             Selected::Focused => String::from("►  "),
             Selected::Unfocused => String::from("⇨  "),
         };
@@ -249,6 +250,7 @@ impl From<&Song> for ListItem<'_> {
     fn from(value: &Song) -> Self {
         let mut prefix = match value.selected {
             Selected::None => String::from("   "),
+            Selected::Moving => String::from("⇅  "),
             Selected::Focused => String::from("►  "),
             Selected::Unfocused => String::from("⇨  "),
         };
@@ -318,6 +320,7 @@ impl From<&ConfigField> for ListItem<'_> {
     fn from(value: &ConfigField) -> Self {
         let prefix = match value.selected {
             Selected::None => String::from("   "),
+            Selected::Moving => String::from("⇅  "),
             Selected::Focused => String::from("►  "),
             Selected::Unfocused => String::from("⇨  "),
         };
