@@ -599,16 +599,20 @@ impl App<'_> {
     }
 
     fn select_left_window(&mut self) {
-        self.focused = Focused::Left;
+        if self.focused == Focused::Left {
+            return;
+        }
 
         match self.window {
             Window::Songs => {
                 if let Some(idx) = self.song_list_state.selected() {
+                    moving_warning!(self.songs[idx], self.log);
                     self.songs[idx].selected = Selected::Unfocused;
                 }
             }
             Window::GlobalSongs => {
                 if let Some(idx) = self.global_song_list_state.selected() {
+                    moving_warning!(self.global_songs[idx], self.log);
                     self.global_songs[idx].selected = Selected::Unfocused;
                 }
             }
@@ -628,10 +632,17 @@ impl App<'_> {
         if let Some(idx) = self.playlist_list_state.selected() {
             self.playlists[idx].selected = Selected::Focused;
         }
+        self.focused = Focused::Left;
     }
 
     fn select_right_window(&mut self) {
-        self.focused = Focused::Right;
+        if self.focused == Focused::Right {
+            return;
+        }
+
+        if let Some(idx) = self.playlist_list_state.selected() {
+            moving_warning!(self.playlists[idx], self.log);
+        }
 
         match self.window {
             Window::Songs => {
@@ -660,6 +671,7 @@ impl App<'_> {
         if let Some(idx) = self.playlist_list_state.selected() {
             self.playlists[idx].selected = Selected::Unfocused;
         }
+        self.focused = Focused::Right;
     }
 
     fn seek_back(&mut self) {
@@ -1273,15 +1285,29 @@ impl App<'_> {
 
     fn select_next(&mut self) {
         if self.focused == Focused::Left {
-            select_next!(self.playlists, self.playlist_list_state);
+            select_next!(
+                self.playlists,
+                self.playlist_list_state,
+                self.save_data.playlists
+            );
             self.see_songs_in_playlist();
         } else {
             match self.window {
                 Window::Songs => {
-                    select_next!(self.songs, self.song_list_state);
+                    if let Some(idx) = self.playlist_list_state.selected() {
+                        select_next!(
+                            self.songs,
+                            self.song_list_state,
+                            self.save_data.playlists[idx].songs
+                        );
+                    }
                 }
                 Window::GlobalSongs => {
-                    select_next!(self.global_songs, self.global_song_list_state);
+                    select_next!(
+                        self.global_songs,
+                        self.global_song_list_state,
+                        self.save_data.songs
+                    );
                 }
                 Window::DownloadManager => {}
                 Window::ConfigurationMenu => {
@@ -1312,19 +1338,31 @@ impl App<'_> {
 
     fn select_previous(&mut self) {
         if self.focused == Focused::Left {
-            select_previous!(self.playlists, self.playlist_list_state);
+            select_previous!(
+                self.playlists,
+                self.playlist_list_state,
+                self.save_data.playlists
+            );
             self.see_songs_in_playlist();
         } else {
             match self.window {
                 Window::Songs => {
-                    select_previous!(self.songs, self.song_list_state);
+                    if let Some(idx) = self.playlist_list_state.selected() {
+                        select_previous!(
+                            self.songs,
+                            self.song_list_state,
+                            self.save_data.playlists[idx].songs
+                        );
+                    }
                 }
                 Window::GlobalSongs => {
-                    select_previous!(self.global_songs, self.global_song_list_state);
+                    select_previous!(
+                        self.global_songs,
+                        self.global_song_list_state,
+                        self.save_data.songs
+                    );
                 }
-                Window::DownloadManager => {
-                    self.log = String::from("DownloadManager TODO! select_previous")
-                }
+                Window::DownloadManager => {}
                 Window::ConfigurationMenu => {
                     if let Some(idx) = self.config_menu_state.selected() {
                         match idx {
@@ -1473,7 +1511,11 @@ impl App<'_> {
                 .songs
                 .iter()
                 .filter_map(|song_name| {
-                    self.save_data.songs.iter().find(|song| &song.name == song_name).cloned()
+                    self.save_data
+                        .songs
+                        .iter()
+                        .find(|song| &song.name == song_name)
+                        .cloned()
                 })
                 .collect();
 
@@ -1512,7 +1554,7 @@ impl App<'_> {
         if !Path::new(&self.save_data.dlp_path).exists() {
             self.enter_input_mode(InputMode::GetDlp);
         }
-        
+
         self.sink.set_volume(self.save_data.last_volume);
         Ok(())
     }
