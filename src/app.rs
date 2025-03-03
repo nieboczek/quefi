@@ -1295,10 +1295,11 @@ impl App<'_> {
             match self.window {
                 Window::Songs => {
                     if let Some(idx) = self.playlist_list_state.selected() {
-                        select_next!(
+                        select_next_song!(
                             self.songs,
                             self.song_list_state,
-                            self.save_data.playlists[idx].songs
+                            self.save_data.playlists[idx].songs,
+                            self.playlists[idx].songs
                         );
                     }
                 }
@@ -1348,10 +1349,11 @@ impl App<'_> {
             match self.window {
                 Window::Songs => {
                     if let Some(idx) = self.playlist_list_state.selected() {
-                        select_previous!(
+                        select_previous_song!(
                             self.songs,
                             self.song_list_state,
-                            self.save_data.playlists[idx].songs
+                            self.save_data.playlists[idx].songs,
+                            self.playlists[idx].songs
                         );
                     }
                 }
