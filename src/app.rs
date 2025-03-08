@@ -592,10 +592,16 @@ impl App<'_> {
 
     fn toggle_repeat(&mut self) {
         self.repeat = match self.repeat {
+            Repeat::None => Repeat::All,
             Repeat::All => Repeat::One,
             Repeat::One => Repeat::None,
-            Repeat::None => Repeat::All,
-        }
+        };
+        
+        self.save_data.last_repeat_mode = match self.repeat {
+            Repeat::None => 0,
+            Repeat::All => 1,
+            Repeat::One => 2,
+        };
     }
 
     fn select_left_window(&mut self) {

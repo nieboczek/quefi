@@ -26,6 +26,7 @@ mod youtube;
 pub(crate) struct SaveData {
     dlp_path: String,
     last_volume: f32,
+    last_repeat_mode: u8,
     playlists: Vec<SerializablePlaylist>,
     songs: Vec<SerializableSong>,
     spotify_client_id: String,
@@ -119,12 +120,13 @@ fn load_data() -> SaveData {
             }
             let data = SaveData {
                 dlp_path: String::new(),
-                spotify_client_id: String::new(),
-                spotify_client_secret: String::new(),
+                last_volume: 0.5,
+                last_repeat_mode: 0,
                 playlists: Vec::new(),
                 songs: Vec::new(),
+                spotify_client_id: String::new(),
+                spotify_client_secret: String::new(),
                 last_valid_token: String::new(),
-                last_volume: 0.25,
             };
             save_data(&data);
             return data;
