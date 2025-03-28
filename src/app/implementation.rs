@@ -19,9 +19,8 @@ use std::{fs::File, io, path::Path, time::Duration};
 use tui_textarea::{CursorMove, Input, Key};
 
 use super::{
-    App, Download, Focused, InputMode, Mode, Playing,
-    Playlist, ProcessingPlaylistSongs, QueuedSong, Repeat, Selected, SerializablePlaylist,
-    SerializableSong, Song, Window,
+    App, Download, Focused, InputMode, Mode, Playing, Playlist, ProcessingPlaylistSongs,
+    QueuedSong, Repeat, Selected, SerializablePlaylist, SerializableSong, Song, Window,
 };
 
 impl App<'_> {

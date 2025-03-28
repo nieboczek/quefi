@@ -59,7 +59,7 @@ impl App<'_> {
     fn render_playlists(&mut self, area: Rect, buf: &mut Buffer) {
         let block = Block::bordered()
             .title("Playlists")
-            .border_set(border::THICK);
+            .border_set(border::PLAIN);
 
         StatefulWidget::render(
             List::new(&self.playlists).block(block),
@@ -70,7 +70,7 @@ impl App<'_> {
     }
 
     fn render_player(&mut self, area: Rect, buf: &mut Buffer) {
-        let block = Block::bordered().title("Player").border_set(border::THICK);
+        let block = Block::bordered().title("Player").border_set(border::PLAIN);
 
         let repeat_symbol = match self.repeat {
             Repeat::All => "🔁",
@@ -149,7 +149,7 @@ impl App<'_> {
                 Window::ConfigurationMenu => "Configuration menu",
             })
             .title_bottom("q - quit   y - help")
-            .border_set(border::THICK);
+            .border_set(border::PLAIN);
 
         if self.mode == Mode::Help {
             Paragraph::new(concat!(
