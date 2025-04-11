@@ -1,7 +1,7 @@
 # Quefi
 <!-- Badges here -->
 Quefi is a free, open-source TUI music player that can not only play your local files, but also download tracks and entire playlists from Spotify.
-It's perfect for listening to music while working on your computer or just chilling on the couch.
+It's perfect for listening to music while working on your computer or just chilling.
 <!-- Screenshots here -->
 
 ## Installation
@@ -15,11 +15,11 @@ To configure Quefi, you can open the configuration menu using `c` and browse var
 ## TODO
 Top - most priority; bottom - least priority
 
-- Compare song duration from Spotify & YouTube to make searches a little bit more accurate
 - Show which song is played in playlist
 - Make repeat one mode work
-- Make downloading songs from YouTube link work better
+- Pick an element from global songs when adding a song to a playlist + searchbar
 - Limit amount of searching/downloading requests at once
+- Compare song duration from Spotify & YouTube to make Spotify song searches a little bit more accurate
 - Discord Rich Presence
 - Make mouse interact with elements
 

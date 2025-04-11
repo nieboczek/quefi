@@ -102,11 +102,7 @@ impl App<'_> {
             title = &self.song_queue[0].name;
 
             let song_idx = self.song_queue[0].song_idx;
-            if song_idx < 10 {
-                num = format!("0{song_idx}");
-            } else {
-                num = song_idx.to_string();
-            }
+            num = format!("{song_idx:02}");
         } else {
             title = "";
             num = String::from("XX");
@@ -176,12 +172,15 @@ impl App<'_> {
             .render(area, buf);
         } else {
             match self.window {
-                Window::Songs => StatefulWidget::render(
-                    List::new(&self.songs).block(block),
-                    area,
-                    buf,
-                    &mut self.song_list_state,
-                ),
+                Window::Songs => {
+                    let playlist_idx = self.playlist_list_state.selected().unwrap();
+                    StatefulWidget::render(
+                        List::new(&self.playlists[playlist_idx].songs).block(block),
+                        area,
+                        buf,
+                        &mut self.song_list_state,
+                    );
+                }
                 Window::GlobalSongs => StatefulWidget::render(
                     List::new(&self.global_songs).block(block),
                     area,

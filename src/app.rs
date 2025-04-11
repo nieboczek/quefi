@@ -62,11 +62,12 @@ enum Selected {
     Unfocused,
 }
 
+type PlaylistSongIdx = usize;
+
 #[derive(Debug, PartialEq)]
 enum Playing {
     GlobalSong(usize),
-    Playlist(usize),
-    Song(usize),
+    Playlist(usize, PlaylistSongIdx),
     None,
 }
 
@@ -91,7 +92,7 @@ pub(crate) struct SerializableSong {
 
 #[derive(Debug, Clone)]
 struct Playlist {
-    songs: Vec<SerializableSong>,
+    songs: Vec<Song>,
     selected: Selected,
     playing: bool,
     name: String,
@@ -108,7 +109,7 @@ struct Song {
 #[derive(Debug)]
 struct QueuedSong {
     name: String,
-    song_idx: u16,
+    song_idx: usize,
     duration: Duration,
 }
 
@@ -172,7 +173,6 @@ pub(crate) struct App<'a> {
     global_songs: Vec<Song>,
     text_area: TextArea<'a>,
     valid_input: bool,
-    songs: Vec<Song>,
     playing: Playing,
     focused: Focused,
     config: Config,
@@ -230,7 +230,6 @@ impl App<'_> {
             global_songs: Vec::new(),
             downloads: HashMap::new(),
             playlists: Vec::new(),
-            songs: Vec::new(),
             playing: Playing::None,
             log: String::from("Initialized!"),
             mode: Mode::Normal,

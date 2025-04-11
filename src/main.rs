@@ -63,6 +63,7 @@ pub(crate) enum Error {
     SpotifyBadAuth(DownloadId, SpotifyLink),
     Http(reqwest::Error),
     Io(std::io::Error),
+    BadSerialization,
     YtMusic,
 }
 
@@ -83,9 +84,10 @@ impl Display for Error {
         match self {
             Self::Http(err) => write!(f, "HTTP Error: {err}"),
             Self::Io(err) => write!(f, "IO Error: {err}"),
+            Self::BadSerialization => write!(f, "Couldn't deserialize the repeat mode"),
             Self::YtMusic => write!(f, "Failed to search YT Music"),
             &Self::SpotifyBadAuth(..) => {
-                panic!("Wanted to display Error::SpotifyBadAuth")
+                panic!("Tried to display Error::SpotifyBadAuth");
             }
         }
     }
@@ -170,7 +172,7 @@ fn restore_terminal() -> io::Result<()> {
 }
 
 #[tokio::main]
-async fn main() -> io::Result<()> {
+async fn main() -> Result<(), Error> {
     let terminal = init_terminal()?;
     let mut app = App::new(load_data());
 
