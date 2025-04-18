@@ -315,7 +315,18 @@ impl App<'_> {
         let song = self.playlists[idx].songs[start_idx].clone();
         self.play_path(&song.name, &song.path);
 
-        let song_idx = (start_idx + 1) % self.playlists[idx].songs.len();
+        let next_idx = start_idx + 1;
+
+        let song_idx = if next_idx >= self.playlists[idx].songs.len() {
+            if self.repeat == Repeat::All {
+                0
+            } else {
+                return;
+            }
+        } else {
+            next_idx
+        };
+
         let song = self.playlists[idx].songs[song_idx].clone();
         self.play_path(&song.name, &song.path);
     }
@@ -353,6 +364,7 @@ impl App<'_> {
                         if self.repeat == Repeat::All {
                             0
                         } else {
+                            self.playlists[playlist_idx].songs[idx].playing = false;
                             return;
                         }
                     } else {
@@ -373,33 +385,32 @@ impl App<'_> {
 
     fn move_item(&mut self) {
         if self.focused == Focused::Left {
-            if let Some(idx) = self.playlist_list_state.selected() {
-                if self.playlists[idx].selected == Selected::Moving {
-                    self.playlists[idx].selected = Selected::Focused;
-                } else {
-                    self.playlists[idx].selected = Selected::Moving;
-                }
+            let idx = self.playlist_list_state.selected().unwrap();
+
+            if self.playlists[idx].selected == Selected::Moving {
+                self.playlists[idx].selected = Selected::Focused;
+            } else {
+                self.playlists[idx].selected = Selected::Moving;
             }
         } else {
             match self.window {
                 Window::Songs => {
                     let playlist_idx = self.playlist_list_state.selected().unwrap();
+                    let idx = self.song_list_state.selected().unwrap();
 
-                    if let Some(idx) = self.song_list_state.selected() {
-                        if self.playlists[playlist_idx].songs[idx].selected == Selected::Moving {
-                            self.playlists[playlist_idx].songs[idx].selected = Selected::Focused;
-                        } else {
-                            self.playlists[playlist_idx].songs[idx].selected = Selected::Moving;
-                        }
+                    if self.playlists[playlist_idx].songs[idx].selected == Selected::Moving {
+                        self.playlists[playlist_idx].songs[idx].selected = Selected::Focused;
+                    } else {
+                        self.playlists[playlist_idx].songs[idx].selected = Selected::Moving;
                     }
                 }
                 Window::GlobalSongs => {
-                    if let Some(idx) = self.global_song_list_state.selected() {
-                        if self.global_songs[idx].selected == Selected::Moving {
-                            self.global_songs[idx].selected = Selected::Focused;
-                        } else {
-                            self.global_songs[idx].selected = Selected::Moving;
-                        }
+                    let idx = self.global_song_list_state.selected().unwrap();
+
+                    if self.global_songs[idx].selected == Selected::Moving {
+                        self.global_songs[idx].selected = Selected::Focused;
+                    } else {
+                        self.global_songs[idx].selected = Selected::Moving;
                     }
                 }
                 _ => {}
@@ -427,19 +438,20 @@ impl App<'_> {
             return;
         }
 
+        let playlist_idx = self.playlist_list_state.selected().unwrap();
+
         match self.window {
             Window::Songs => {
-                let playlist_idx = self.playlist_list_state.selected().unwrap();
                 let idx = self.song_list_state.selected().unwrap();
 
                 moving_warning!(self.playlists[playlist_idx].songs[idx], self.log);
                 self.playlists[playlist_idx].songs[idx].selected = Selected::Unfocused;
             }
             Window::GlobalSongs => {
-                if let Some(idx) = self.global_song_list_state.selected() {
-                    moving_warning!(self.global_songs[idx], self.log);
-                    self.global_songs[idx].selected = Selected::Unfocused;
-                }
+                let idx = self.global_song_list_state.selected().unwrap();
+
+                moving_warning!(self.global_songs[idx], self.log);
+                self.global_songs[idx].selected = Selected::Unfocused;
             }
             Window::DownloadManager => {}
             Window::ConfigurationMenu => {
@@ -454,9 +466,7 @@ impl App<'_> {
             }
         }
 
-        if let Some(idx) = self.playlist_list_state.selected() {
-            self.playlists[idx].selected = Selected::Focused;
-        }
+        self.playlists[playlist_idx].selected = Selected::Focused;
         self.focused = Focused::Left;
     }
 
@@ -464,22 +474,21 @@ impl App<'_> {
         if self.focused == Focused::Right {
             return;
         }
+        
+        let playlist_idx = self.playlist_list_state.selected().unwrap();
 
-        if let Some(idx) = self.playlist_list_state.selected() {
-            moving_warning!(self.playlists[idx], self.log);
-        }
+        moving_warning!(self.playlists[playlist_idx], self.log);
 
         match self.window {
             Window::Songs => {
-                let playlist_idx = self.playlist_list_state.selected().unwrap();
                 let idx = self.song_list_state.selected().unwrap();
 
                 self.playlists[playlist_idx].songs[idx].selected = Selected::Focused;
             }
             Window::GlobalSongs => {
-                if let Some(idx) = self.global_song_list_state.selected() {
-                    self.global_songs[idx].selected = Selected::Focused;
-                }
+                let idx = self.global_song_list_state.selected().unwrap();
+
+                self.global_songs[idx].selected = Selected::Focused;
             }
             Window::DownloadManager => {}
             Window::ConfigurationMenu => {
@@ -494,9 +503,7 @@ impl App<'_> {
             }
         }
 
-        if let Some(idx) = self.playlist_list_state.selected() {
-            self.playlists[idx].selected = Selected::Unfocused;
-        }
+        self.playlists[playlist_idx].selected = Selected::Unfocused;
         self.focused = Focused::Right;
     }
 
@@ -897,11 +904,12 @@ impl App<'_> {
 
     fn stop_playing_current(&mut self) {
         match self.playing {
-            Playing::Playlist(idx, _) if !self.playlists.is_empty() => {
-                self.playlists[idx].playing = false
+            Playing::Playlist(idx, song_idx) if !self.playlists.is_empty() => {
+                self.playlists[idx].songs[song_idx].playing = false;
+                self.playlists[idx].playing = false;
             }
             Playing::GlobalSong(idx) if !self.global_songs.is_empty() => {
-                self.global_songs[idx].playing = false
+                self.global_songs[idx].playing = false;
             }
             Playing::None => panic!("Tried to stop playing Playing::None"),
             _ => {}
@@ -912,74 +920,76 @@ impl App<'_> {
     }
 
     fn play_current(&mut self) {
+        let playlist_idx = self.playlist_list_state.selected().unwrap();
+
         if self.focused == Focused::Left {
-            if let Some(idx) = self.playlist_list_state.selected() {
-                match self.playing {
-                    Playing::Playlist(playing_idx, _) => {
-                        self.stop_playing_current();
-                        if playing_idx == idx {
-                            return;
-                        }
+            match self.playing {
+                Playing::Playlist(playing_idx, _) => {
+                    self.stop_playing_current();
+                    if playing_idx == playlist_idx {
+                        return;
                     }
-                    Playing::GlobalSong(_) => self.stop_playing_current(),
-                    Playing::None => {}
                 }
-
-                self.playlists[idx].playing = true;
-                self.playing = Playing::Playlist(idx, 0);
-                self.preload_songs(0);
-
-                self.last_queue_length = self.sink.len();
-                self.sink.play();
+                Playing::GlobalSong(_) => self.stop_playing_current(),
+                Playing::None => {}
             }
+
+            self.playlists[playlist_idx].songs[0].playing = true;
+            self.playlists[playlist_idx].playing = true;
+            self.playing = Playing::Playlist(playlist_idx, 0);
+            self.preload_songs(0);
+
+            self.last_queue_length = self.sink.len();
+            self.sink.play();
         } else {
             match self.window {
                 Window::Songs => {
-                    if let Some(idx) = self.song_list_state.selected() {
-                        match self.playing {
-                            Playing::Playlist(_, song_idx) => {
-                                self.stop_playing_current();
-                                if song_idx == idx {
-                                    return;
-                                }
+                    let idx = self.song_list_state.selected().unwrap();
+
+                    match self.playing {
+                        Playing::Playlist(_, song_idx) => {
+                            self.stop_playing_current();
+                            if song_idx == idx {
+                                return;
                             }
-                            Playing::GlobalSong(_) => self.stop_playing_current(),
-                            Playing::None => {}
                         }
-
-                        let playlist_idx = self.playlist_list_state.selected().unwrap();
-                        self.playlists[playlist_idx].songs[idx].playing = true;
-
-                        self.playing = Playing::Playlist(playlist_idx, idx);
-                        self.preload_songs(idx);
-
-                        self.last_queue_length = self.sink.len();
-                        self.sink.play();
+                        Playing::GlobalSong(_) => self.stop_playing_current(),
+                        Playing::None => {}
                     }
+
+                    self.playlists[playlist_idx].playing = true;
+                    self.playlists[playlist_idx].songs[idx].playing = true;
+
+                    self.playing = Playing::Playlist(playlist_idx, idx);
+                    self.preload_songs(idx);
+
+                    self.last_queue_length = self.sink.len();
+                    self.sink.play();
                 }
                 Window::GlobalSongs => {
-                    if let Some(idx) = self.global_song_list_state.selected() {
-                        match self.playing {
-                            Playing::Playlist(_, _) => self.stop_playing_current(),
-                            Playing::GlobalSong(playing_idx) => {
-                                self.stop_playing_current();
-                                if playing_idx == idx {
-                                    return;
-                                }
-                            }
-                            Playing::None => {}
-                        }
+                    let idx = self.global_song_list_state.selected().unwrap();
 
-                        self.global_songs[idx].playing = true;
-                        self.playing = Playing::GlobalSong(idx);
-                        self.song_queue.clear();
-                        self.play_path(
-                            &self.global_songs[idx].name.clone(),
-                            &self.global_songs[idx].path.clone(),
-                        );
-                        self.last_queue_length = self.sink.len();
-                        self.sink.play();
+                    match self.playing {
+                        Playing::Playlist(_, _) => self.stop_playing_current(),
+                        Playing::GlobalSong(playing_idx) => {
+                            self.stop_playing_current();
+                            if playing_idx == idx {
+                                return;
+                            }
+                        }
+                        Playing::None => {}
                     }
+
+                    self.global_songs[idx].playing = true;
+                    self.playing = Playing::GlobalSong(idx);
+                    self.song_queue.clear();
+                    self.play_path(
+                        &self.global_songs[idx].name.clone(),
+                        &self.global_songs[idx].path.clone(),
+                    );
+
+                    self.last_queue_length = self.sink.len();
+                    self.sink.play();
                 }
                 Window::DownloadManager => {}
                 Window::ConfigurationMenu => {
@@ -1011,13 +1021,13 @@ impl App<'_> {
         } else {
             match self.window {
                 Window::Songs => {
-                    if let Some(idx) = self.playlist_list_state.selected() {
-                        select_next!(
-                            self.playlists[idx].songs,
-                            self.song_list_state,
-                            self.save_data.playlists[idx].songs
-                        );
-                    }
+                    let idx = self.playlist_list_state.selected().unwrap();
+
+                    select_next!(
+                        self.playlists[idx].songs,
+                        self.song_list_state,
+                        self.save_data.playlists[idx].songs
+                    );
                 }
                 Window::GlobalSongs => {
                     select_next!(
@@ -1064,13 +1074,13 @@ impl App<'_> {
         } else {
             match self.window {
                 Window::Songs => {
-                    if let Some(idx) = self.playlist_list_state.selected() {
-                        select_previous!(
-                            self.playlists[idx].songs,
-                            self.song_list_state,
-                            self.save_data.playlists[idx].songs
-                        );
-                    }
+                    let idx = self.playlist_list_state.selected().unwrap();
+
+                    select_previous!(
+                        self.playlists[idx].songs,
+                        self.song_list_state,
+                        self.save_data.playlists[idx].songs
+                    );
                 }
                 Window::GlobalSongs => {
                     select_previous!(
@@ -1159,78 +1169,78 @@ impl App<'_> {
 
     fn remove_current(&mut self) {
         if self.focused == Focused::Left {
-            if let Some(idx) = self.playlist_list_state.selected() {
-                self.log = format!("Remove playlist idx {idx}");
-                self.playlists.remove(idx);
-                self.save_data.playlists.remove(idx);
+            let idx = self.playlist_list_state.selected().unwrap();
 
-                if let Playing::Playlist(playing_idx, _) = self.playing {
-                    if playing_idx == idx {
-                        self.playing = Playing::None;
-                    }
+            self.log = format!("Remove playlist idx {idx}");
+            self.playlists.remove(idx);
+            self.save_data.playlists.remove(idx);
+
+            if let Playing::Playlist(playing_idx, _) = self.playing {
+                if playing_idx == idx {
+                    self.playing = Playing::None;
                 }
+            }
 
-                if !self.playlists.is_empty() {
-                    if idx == self.playlists.len() {
-                        select!(self.playlists, self.playlist_list_state, idx - 1);
-                        self.see_songs_in_playlist();
-                    } else if idx == 0 {
-                        select!(self.playlists, self.playlist_list_state, 0);
-                        self.see_songs_in_playlist();
-                    }
+            if !self.playlists.is_empty() {
+                if idx == self.playlists.len() {
+                    select!(self.playlists, self.playlist_list_state, idx - 1);
+                    self.see_songs_in_playlist();
+                } else if idx == 0 {
+                    select!(self.playlists, self.playlist_list_state, 0);
+                    self.see_songs_in_playlist();
                 }
             }
         } else {
             match self.window {
                 Window::Songs => {
-                    if let Some(idx) = self.song_list_state.selected() {
-                        let playlist_idx = self.playlist_list_state.selected().unwrap();
-                        self.log = format!("Remove song idx {idx}");
+                    let playlist_idx = self.playlist_list_state.selected().unwrap();
+                    let idx = self.song_list_state.selected().unwrap();
 
-                        self.playlists[playlist_idx].songs.remove(idx);
-                        self.save_data.playlists[playlist_idx].songs.remove(idx);
+                    self.log = format!("Remove song idx {idx}");
 
-                        if let Playing::Playlist(playlist_idx, playing_idx) = self.playing {
-                            if playing_idx == idx {
-                                self.playing = Playing::Playlist(playlist_idx, playing_idx - 1);
-                                self.preload_songs(playing_idx - 1);
-                            }
+                    self.playlists[playlist_idx].songs.remove(idx);
+                    self.save_data.playlists[playlist_idx].songs.remove(idx);
+
+                    if let Playing::Playlist(playlist_idx, playing_idx) = self.playing {
+                        if playing_idx == idx {
+                            self.playing = Playing::Playlist(playlist_idx, playing_idx - 1);
+                            self.preload_songs(playing_idx - 1);
                         }
+                    }
 
-                        if !self.playlists[playlist_idx].songs.is_empty() {
-                            if idx == self.playlists[playlist_idx].songs.len() {
-                                select!(
-                                    self.playlists[playlist_idx].songs,
-                                    self.song_list_state,
-                                    idx - 1
-                                );
-                            } else if idx == 0 {
-                                select!(
-                                    self.playlists[playlist_idx].songs,
-                                    self.song_list_state,
-                                    0
-                                );
-                            }
+                    if !self.playlists[playlist_idx].songs.is_empty() {
+                        if idx == self.playlists[playlist_idx].songs.len() {
+                            select!(
+                                self.playlists[playlist_idx].songs,
+                                self.song_list_state,
+                                idx - 1
+                            );
+                        } else if idx == 0 {
+                            select!(
+                                self.playlists[playlist_idx].songs,
+                                self.song_list_state,
+                                0
+                            );
                         }
                     }
                 }
                 Window::GlobalSongs => {
-                    if let Some(idx) = self.global_song_list_state.selected() {
-                        self.global_songs.remove(idx);
-                        self.save_data.songs.remove(idx);
+                    let idx = self.global_song_list_state.selected().unwrap();
 
-                        if let Playing::GlobalSong(playing_idx) = self.playing {
-                            if playing_idx == idx {
-                                self.playing = Playing::None;
-                            }
+                    self.global_songs.remove(idx);
+                    self.save_data.songs.remove(idx);
+
+                    if let Playing::GlobalSong(playing_idx) = self.playing {
+                        if playing_idx == idx {
+                            self.playing = Playing::None;
                         }
+                    }
 
-                        if !self.global_songs.is_empty() {
-                            if idx == self.global_songs.len() {
-                                select!(self.global_songs, self.global_song_list_state, idx - 1);
-                            } else if idx == 0 {
-                                select!(self.global_songs, self.global_song_list_state, 0);
-                            }
+                    if !self.global_songs.is_empty() {
+                        if idx == self.global_songs.len() {
+                            select!(self.global_songs, self.global_song_list_state, idx - 1);
+                        } else if idx == 0 {
+                            select!(self.global_songs, self.global_song_list_state, 0);
                         }
                     }
                 }
