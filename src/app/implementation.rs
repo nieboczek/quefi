@@ -343,10 +343,13 @@ impl App<'_> {
             // TODO: Implement Repeat::One
 
             if !self.song_queue.is_empty() {
-                self.last_queue_length = self.sink.len();
                 self.song_queue.remove(0);
 
-                if let Playing::Playlist(playlist_idx, idx) = self.playing {
+                if self.repeat == Repeat::One {
+                    if let Playing::Playlist(_, song_idx) = self.playing {
+                        self.preload_song(song_idx);
+                    }
+                } else if let Playing::Playlist(playlist_idx, idx) = self.playing {
                     let mut song_idx = idx + PRELOAD_SONG_COUNT;
 
                     let out_of_bounds = song_idx >= self.playlists[playlist_idx].songs.len();
@@ -374,6 +377,10 @@ impl App<'_> {
                     self.playlists[playlist_idx].songs[idx].playing = false;
                     self.playlists[playlist_idx].songs[new_idx].playing = true;
                     self.playing = Playing::Playlist(playlist_idx, new_idx);
+                }
+            } else if self.repeat == Repeat::One {
+                if let Playing::Playlist(_, song_idx) = self.playing {
+                    self.preload_song(song_idx);
                 }
             } else {
                 self.log = String::from("Queue is empty");

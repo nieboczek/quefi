@@ -185,7 +185,7 @@ impl App<'_> {
                     List::new(&self.global_songs).block(block),
                     area,
                     buf,
-                    &mut self.song_list_state,
+                    &mut self.global_song_list_state,
                 ),
                 Window::DownloadManager => StatefulWidget::render(
                     List::new(self.downloads.values()).block(block),

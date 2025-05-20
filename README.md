@@ -14,9 +14,7 @@ To configure Quefi, you can open the configuration menu using `c` and browse var
 
 ## TODO
 Top - most priority; bottom - least priority
-
-- Show which song is played in playlist
-- Make repeat one mode work
+- Item renaming
 - Pick an element from global songs when adding a song to a playlist + searchbar
 - Limit amount of searching/downloading requests at once
 - Compare song duration from Spotify & YouTube to make Spotify song searches a little bit more accurate
