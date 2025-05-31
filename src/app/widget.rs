@@ -109,13 +109,10 @@ impl App<'_> {
             remaining_song_time = Duration::from_secs(0);
         }
 
-        let progress_width = area.as_size().width - 11;
-        let progress = (progress_width as f32 * (1. - remaining_time)) as usize;
-        let mut inverted_progress = (progress_width as f32 * remaining_time) as usize;
-
-        if progress + inverted_progress != progress_width as usize {
-            inverted_progress += 1;
-        }
+        let remaining_time_str = format_duration(remaining_song_time);
+        let progress_width = area.as_size().width - 7 - remaining_time_str.len() as u16;
+        let progress = (progress_width as f32 * (1. - remaining_time)).floor() as usize;
+        let inverted_progress = (progress_width as f32 * remaining_time).ceil() as usize;
 
         Paragraph::new(format!(
             "{num} {title}{}{repeat_symbol} 🔈{:.0}% {} \n{pause_symbol} {}{} {} ",
@@ -130,7 +127,7 @@ impl App<'_> {
             // Spaces until remaining time won't fit
             " ".repeat(inverted_progress),
             // Remaining time
-            format_duration(remaining_song_time),
+            remaining_time_str,
         ))
         .block(block)
         .render(area, buf);
@@ -222,6 +219,7 @@ impl App<'_> {
     }
 }
 
+#[inline(always)]
 fn format_duration(duration: Duration) -> String {
     let minutes = duration.as_secs() / 60;
     let seconds = duration.as_secs() % 60;
