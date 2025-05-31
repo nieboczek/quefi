@@ -447,17 +447,20 @@ impl App<'_> {
 
         let playlist_idx = self.playlist_list_state.selected().unwrap();
 
+        self.playlists[playlist_idx].selected = Selected::Focused;
+        self.focused = Focused::Left;
+
         match self.window {
             Window::Songs => {
                 let idx = self.song_list_state.selected().unwrap();
-
                 moving_warning!(self.playlists[playlist_idx].songs[idx], self.log);
+
                 self.playlists[playlist_idx].songs[idx].selected = Selected::Unfocused;
             }
             Window::GlobalSongs => {
                 let idx = self.global_song_list_state.selected().unwrap();
-
                 moving_warning!(self.global_songs[idx], self.log);
+
                 self.global_songs[idx].selected = Selected::Unfocused;
             }
             Window::DownloadManager => {}
@@ -472,29 +475,33 @@ impl App<'_> {
                 }
             }
         }
-
-        self.playlists[playlist_idx].selected = Selected::Focused;
-        self.focused = Focused::Left;
     }
 
     fn select_right_window(&mut self) {
         if self.focused == Focused::Right {
             return;
         }
-        
-        let playlist_idx = self.playlist_list_state.selected().unwrap();
 
+        let playlist_idx = self.playlist_list_state.selected().unwrap();
         moving_warning!(self.playlists[playlist_idx], self.log);
+
+        self.playlists[playlist_idx].selected = Selected::Unfocused;
+        self.focused = Focused::Right;
 
         match self.window {
             Window::Songs => {
-                let idx = self.song_list_state.selected().unwrap();
-
-                self.playlists[playlist_idx].songs[idx].selected = Selected::Focused;
+                for (i, song) in self.playlists[playlist_idx].songs.iter_mut().enumerate() {
+                    if song.selected == Selected::Unfocused {
+                        self.song_list_state.select(Some(i));
+                        song.selected = Selected::Focused;
+                        return;
+                    }
+                }
+                // If couldn't find a song with Selected::Unfocused, select first
+                self.playlists[playlist_idx].songs[0].selected = Selected::Focused;
             }
             Window::GlobalSongs => {
                 let idx = self.global_song_list_state.selected().unwrap();
-
                 self.global_songs[idx].selected = Selected::Focused;
             }
             Window::DownloadManager => {}
@@ -509,9 +516,6 @@ impl App<'_> {
                 }
             }
         }
-
-        self.playlists[playlist_idx].selected = Selected::Unfocused;
-        self.focused = Focused::Right;
     }
 
     fn seek_back(&mut self) {
@@ -1223,11 +1227,7 @@ impl App<'_> {
                                 idx - 1
                             );
                         } else if idx == 0 {
-                            select!(
-                                self.playlists[playlist_idx].songs,
-                                self.song_list_state,
-                                0
-                            );
+                            select!(self.playlists[playlist_idx].songs, self.song_list_state, 0);
                         }
                     }
                 }
