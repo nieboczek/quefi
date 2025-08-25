@@ -11,7 +11,7 @@ use tui_textarea::TextArea;
 #[macro_use]
 mod macros;
 
-mod implementation;
+mod imp;
 mod widget;
 
 fn is_valid_youtube_link(url: &str) -> bool {
