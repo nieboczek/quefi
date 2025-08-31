@@ -2,7 +2,7 @@ use crate::{SaveData, TaskResult};
 use ratatui::widgets::ListState;
 use regex::Regex;
 use reqwest::Client;
-use rodio::{OutputStream, OutputStreamHandle, Sink};
+use rodio::{OutputStream, OutputStreamBuilder, Sink};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, time::Duration};
 use tokio::task::JoinHandle;
@@ -158,7 +158,7 @@ enum Download {
 }
 
 pub(crate) struct App<'a> {
-    _keep_alive: (OutputStream, OutputStreamHandle),
+    _keep_alive: OutputStream,
     join_handles: Vec<JoinHandle<TaskResult>>,
     global_song_list_state: ListState,
     downloads: HashMap<u8, Download>,
@@ -191,11 +191,13 @@ impl App<'_> {
             .build()
             .unwrap();
 
-        let keep_alive = OutputStream::try_default().unwrap();
-        let sink = Sink::try_new(&keep_alive.1).unwrap();
+        let mut stream = OutputStreamBuilder::open_default_stream().unwrap();
+        let sink = Sink::connect_new(stream.mixer());
+        
+        stream.log_on_drop(false);
 
         App {
-            _keep_alive: keep_alive,
+            _keep_alive: stream,
             client,
             sink,
             config: Config {
